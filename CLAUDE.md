@@ -29,10 +29,11 @@ backend/app/
   core/              geo helpers, models (pydantic), station catalog
   tests/             17 offline tests (no network)
 frontend/src/
-  App.jsx            top-level state, scenario selection, 2D/3D toggle, banner
-  components/        MapView (2D), Volume3D (3D), Sidebar, SearchBar
+  App.jsx            top-level state, scenario/source, 2D/3D toggle, timeline, banner
+  components/        MapView (2D), Volume3D (3D), Sidebar, SearchBar, Timeline
   hooks/             useGeolocation (legacy live-mode helper)
-  lib/               api, colormaps, radarRender (2D georef), volume3d (3D beam math), places (search catalog)
+  lib/               api, colormaps, radarRender (2D georef), volume3d (3D beam math),
+                     places (search catalog), sample (crosshair polar lookup)
 ```
 
 ## How the pieces fit
@@ -110,6 +111,19 @@ Each demo scenario is a *living* simulation over a 2-hour window (5-min steps,
   digital sim-clock. `App` runs the playback rAF; **2D crossfades** two adjacent
   5-min frames (`MapView` radar-a/radar-b layers) for smooth scrubbing; 3D +
   analytics snap to the nearest frame (cached).
+- **Advancing warnings:** `demo_scenarios.alert_features(scenario, minute)`
+  emits one warning polygon downstream of the storm core (Tornado/red at peak,
+  else Severe/yellow); `MapView` blinks it via the sweep rAF.
+
+## Workstation UI extras
+- **Inspect crosshair** (`MapView` tool menu + `lib/sample.js`): O(1) polar
+  lookup of Z & V under the cursor → floating HUD (dBZ / MPH). No canvas reads.
+- **Station Source switch** (Sidebar): Demo ⇄ Live NOAA. `App.sourceMode` is
+  wired; Live is a stub that will point the existing `getSweep`/`getVolume`
+  helpers at a station.
+- **Meteorological Log** (Sidebar): per-frame max core dBZ, peak rotational
+  shear (kt/mph), and an estimated hail size — driven by new
+  `AnalysisResult.max_reflectivity_dbz` / `peak_rotational_velocity_kt`.
 
 ## Status & next ideas
 - **Done:** Phases 1–5 + offline demo-scenario search, committed/pushed to

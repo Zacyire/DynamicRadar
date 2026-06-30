@@ -3,6 +3,9 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { getDemoSweep } from '../lib/api';
 import { renderSweepToImage } from '../lib/radarRender';
+import { sampleGate } from '../lib/sample';
+
+const MS_TO_MPH = 2.2369362921;
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -81,8 +84,15 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
   const radarRef = useRef(null); // { center: [lon,lat], radiusKm } for the sweep
   const frameCacheRef = useRef(new Map()); // `${scenario}|${field}|${m}` -> {sweep,url,coordinates}
   const abRef = useRef({ a: null, b: null }); // minute currently shown on each layer
+  const sampleRef = useRef({ center: null, z: null, v: null }); // Z/V sweeps for the crosshair
+  const sampleCacheRef = useRef(new Map()); // `${scenario}|${m}` -> {z,v}
+  const lastPtRef = useRef(null); // last cursor {point, lngLat}
   const [ready, setReady] = useState(false);
   const [renderMsg, setRenderMsg] = useState('');
+  const [tool, setTool] = useState('pointer'); // 'pointer' | 'crosshair'
+  const [hud, setHud] = useState(null); // { x, y, z, v }
+  const toolRef = useRef(tool);
+  toolRef.current = tool;
 
   // --- map init ---------------------------------------------------------- //
   useEffect(() => {
@@ -236,10 +246,91 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
         map.getSource('sweep-trail')?.setData(trail);
         map.getSource('sweep-beam')?.setData(beam);
       }
+      // Blink the warning polygon(s).
+      if (map.getLayer('alerts-fill')) {
+        const pulse = 0.5 + 0.5 * Math.abs(Math.sin(now / 350));
+        map.setPaintProperty('alerts-fill', 'fill-opacity', 0.08 + 0.22 * pulse);
+        map.setPaintProperty('alerts-line', 'line-opacity', 0.35 + 0.65 * pulse);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
+  }, [ready]);
+
+  // --- inspect crosshair: cursor, sampling sweeps, HUD ------------------- //
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    map.getCanvas().style.cursor = tool === 'crosshair' ? 'crosshair' : '';
+    if (tool !== 'crosshair') setHud(null);
+  }, [ready, tool]);
+
+  // Recompute the HUD readout from the current sample sweeps + last cursor.
+  const updateHud = () => {
+    const pt = lastPtRef.current;
+    const s = sampleRef.current;
+    if (toolRef.current !== 'crosshair' || !pt || !s.center) return;
+    const { lng, lat } = pt.lngLat;
+    const z = sampleGate(s.z, s.center, lng, lat);
+    const v = sampleGate(s.v, s.center, lng, lat);
+    if (z == null && v == null) {
+      setHud(null);
+      return;
+    }
+    setHud({ x: pt.point.x, y: pt.point.y, z, v });
+  };
+
+  // Fetch Z + V sweeps for the current frame whenever the crosshair is active.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || tool !== 'crosshair' || !scenario) return;
+    const m = Math.floor(minute / 5) * 5;
+    const key = `${scenario}|${m}`;
+    const cache = sampleCacheRef.current;
+    let cancelled = false;
+    const apply = (pair) => {
+      if (cancelled) return;
+      sampleRef.current = { center: radarRef.current?.center || null, z: pair.z, v: pair.v };
+      updateHud();
+    };
+    if (cache.has(key)) {
+      apply(cache.get(key));
+    } else {
+      Promise.all([
+        getDemoSweep(scenario, { field: 'Z', minute: m }),
+        getDemoSweep(scenario, { field: 'V', minute: m }),
+      ])
+        .then(([z, v]) => {
+          const pair = { z, v };
+          cache.set(key, pair);
+          apply(pair);
+        })
+        .catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, tool, scenario, minute]);
+
+  // Mouse handlers (registered once).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const onMove = (e) => {
+      lastPtRef.current = { point: e.point, lngLat: e.lngLat };
+      if (toolRef.current === 'crosshair') updateHud();
+    };
+    const onLeave = () => {
+      lastPtRef.current = null;
+      setHud(null);
+    };
+    map.on('mousemove', onMove);
+    map.getCanvas().addEventListener('mouseleave', onLeave);
+    return () => {
+      map.off('mousemove', onMove);
+      map.getCanvas().removeEventListener('mouseleave', onLeave);
+    };
   }, [ready]);
 
   // --- NWS warning polygons ---------------------------------------------- //
@@ -345,6 +436,39 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
   return (
     <div className="map-wrap">
       <div ref={containerRef} className="map-canvas" />
+
+      <div className="tool-menu">
+        <button
+          className={`tool-btn ${tool === 'pointer' ? 'active' : ''}`}
+          onClick={() => setTool('pointer')}
+          title="Pointer"
+        >
+          ⭤
+        </button>
+        <button
+          className={`tool-btn ${tool === 'crosshair' ? 'active' : ''}`}
+          onClick={() => setTool('crosshair')}
+          title="Inspect crosshair"
+        >
+          ✛
+        </button>
+      </div>
+
+      {hud && (
+        <div className="inspect-hud" style={{ left: hud.x + 16, top: hud.y + 16 }}>
+          <div className="hud-row">
+            <span className="hud-label">Reflectivity</span>
+            <span className="hud-val z">{hud.z == null ? '—' : `${hud.z.toFixed(1)} dBZ`}</span>
+          </div>
+          <div className="hud-row">
+            <span className="hud-label">Velocity</span>
+            <span className="hud-val v">
+              {hud.v == null ? '—' : `${(hud.v * MS_TO_MPH).toFixed(0)} MPH`}
+            </span>
+          </div>
+        </div>
+      )}
+
       {renderMsg && <div className="map-toast">{renderMsg}</div>}
     </div>
   );

@@ -475,6 +475,14 @@ def analyze(
 
     hazards = classify_hazards(refl, vel, cc)
 
+    # Frame-global maxima for the Meteorological Log panel.
+    max_z = (
+        round(float(np.ma.max(refl.data)), 1)
+        if refl is not None and refl.data.count() > 0
+        else None
+    )
+    peak_rot_kt = max((s["rotational_velocity_kt"] for s in signatures), default=0.0)
+
     # Summary line.
     n_tds = sum(1 for s in signatures if s["is_tds"])
     bits = []
@@ -492,6 +500,8 @@ def analyze(
         "radar_lon": vel.radar_lon,
         "velocity_elevation_deg": vel.elevation_deg,
         "reflectivity_elevation_deg": (refl.elevation_deg if refl else vel.elevation_deg),
+        "max_reflectivity_dbz": max_z,
+        "peak_rotational_velocity_kt": round(peak_rot_kt, 1),
         "tornado_signatures": signatures,
         "hazards": hazards,
         "summary": summary,

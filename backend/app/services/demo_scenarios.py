@@ -16,6 +16,8 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
+from app.core.geo import destination_point
+
 # --------------------------------------------------------------------------- #
 # Playback timeline                                                            #
 # --------------------------------------------------------------------------- #
@@ -333,40 +335,95 @@ def build_volume(
     }
 
 
-def alert_features(scenario: str) -> list[dict]:
-    """Scenario-appropriate, clearly-labelled demo warning polygons."""
-    meta = _validate(scenario)
-    lat, lon = meta["lat"], meta["lon"]
-    offsets = [(0.45, 0.5), (-0.4, 0.25), (0.15, -0.55)]
-    feats = []
-    for i, event in enumerate(meta["alerts"]):
-        dlat, dlon = offsets[i % len(offsets)]
-        cy, cx = lat + dlat, lon + dlon
-        w, h = 0.4, 0.32
-        feats.append(
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [cx - w, cy - h], [cx + w, cy - h],
-                        [cx + w, cy + h], [cx - w, cy + h], [cx - w, cy - h],
-                    ]],
-                },
-                "properties": {
-                    "id": f"DEMO-{scenario}-{i}",
-                    "event": event,
-                    "headline": f"[DEMO] {event} — {meta['region']} (simulated)",
-                    "severity": "Severe" if "Tornado" in event else "Moderate",
-                    "certainty": "Observed",
-                    "urgency": "Immediate",
-                    "onset": None,
-                    "expires": None,
-                    "areaDesc": meta["region"],
-                },
-            }
-        )
-    return feats
+def _core_track(scenario: str, minute: float):
+    """Return (lat, lon, motion_bearing_deg) of the storm core at `minute`."""
+    meta = SCENARIOS[scenario]
+    rlat, rlon = meta["lat"], meta["lon"]
+
+    def core_at(m: float):
+        if scenario == "tornado":
+            track = _smoothstep(0, 120, m)
+            az = 232.0 - 14.0 * track
+            rng_km = (62000.0 - 26000.0 * track) / 1000.0
+        elif scenario == "squall":
+            advance = -30000.0 + 70000.0 * _smoothstep(0, 120, m)
+            az, rng_km = 90.0, (40000.0 + advance) / 1000.0
+        elif scenario == "hurricane":
+            track = _smoothstep(0, 120, m)
+            # Eye drifts NNE; convert its east/north metres to a bearing/range.
+            e = 22000.0 + 8000.0 * track
+            n = 28000.0 + 10000.0 * track
+            az = (np.degrees(np.arctan2(e, n))) % 360.0
+            rng_km = float(np.hypot(e, n)) / 1000.0
+        else:
+            az, rng_km = 0.0, 0.0
+        return destination_point(rlat, rlon, az, rng_km)
+
+    lat0, lon0 = core_at(minute)
+    lat1, lon1 = core_at(min(minute + 6.0, 120.0))
+    de = (lon1 - lon0) * np.cos(np.radians(rlat))
+    dn = lat1 - lat0
+    bearing = (np.degrees(np.arctan2(de, dn))) % 360.0 if (de or dn) else 45.0
+    return lat0, lon0, float(bearing)
+
+
+def _warning_event(scenario: str, minute: float) -> str | None:
+    """Which warning (if any) is in effect at `minute` for this scenario."""
+    if scenario == "tornado":
+        presence = 1.0 - _smoothstep(92, 120, minute)
+        if minute < 8 or presence < 0.35:
+            return None
+        return "Tornado Warning" if _bell(minute, 62, 24) >= 0.5 else "Severe Thunderstorm Warning"
+    if scenario == "squall":
+        return "Severe Thunderstorm Warning" if (0.7 + 0.4 * _bell(minute, 55, 45)) >= 0.85 else None
+    if scenario == "hurricane":
+        return "Flash Flood Warning"
+    return None
+
+
+def alert_features(scenario: str, minute: float = 0.0) -> list[dict]:
+    """A single warning polygon that tracks downstream of the storm core.
+
+    The polygon advances across the map with the storm and its type escalates
+    to a (red) Tornado Warning at peak rotation, otherwise a (yellow) Severe
+    Thunderstorm Warning.
+    """
+    if scenario == "clear":
+        return []
+    event = _warning_event(scenario, minute)
+    if event is None:
+        return []
+
+    lat, lon, bearing = _core_track(scenario, minute)
+    # A warning "box" projected ahead of the core along its motion vector.
+    near = destination_point(lat, lon, bearing, 8.0)
+    far = destination_point(lat, lon, bearing, 55.0)
+    nl = destination_point(*near, (bearing - 90) % 360, 20.0)
+    nr = destination_point(*near, (bearing + 90) % 360, 20.0)
+    fl = destination_point(*far, (bearing - 90) % 360, 15.0)
+    fr = destination_point(*far, (bearing + 90) % 360, 15.0)
+    ring = [
+        [nl[1], nl[0]], [nr[1], nr[0]], [fr[1], fr[0]], [fl[1], fl[0]], [nl[1], nl[0]],
+    ]
+    meta = SCENARIOS[scenario]
+    return [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": {
+                "id": f"DEMO-{scenario}-warn",
+                "event": event,
+                "headline": f"[DEMO] {event} — {meta['region']} (simulated, advancing)",
+                "severity": "Extreme" if "Tornado" in event else "Severe",
+                "certainty": "Observed",
+                "urgency": "Immediate",
+                "blink": True,
+                "onset": None,
+                "expires": None,
+                "areaDesc": meta["region"],
+            },
+        }
+    ]
 
 
 def timeline_meta() -> dict:

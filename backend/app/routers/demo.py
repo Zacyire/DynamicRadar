@@ -82,7 +82,7 @@ def scenario_analytics(scenario: str, minute: float = _MINUTE) -> AnalysisResult
 
 
 @router.get("/{scenario}/alerts")
-def scenario_alerts(scenario: str) -> dict:
-    """Scenario-appropriate, clearly-labelled demo warning polygons."""
+def scenario_alerts(scenario: str, minute: float = _MINUTE) -> dict:
+    """Advancing warning polygon for the storm at lifecycle `minute`."""
     _check(scenario)
-    return {"type": "FeatureCollection", "features": demo_scenarios.alert_features(scenario)}
+    return {"type": "FeatureCollection", "features": demo_scenarios.alert_features(scenario, minute)}

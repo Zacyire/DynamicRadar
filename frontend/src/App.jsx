@@ -37,6 +37,7 @@ export default function App() {
   const [alerts, setAlerts] = useState(null);
   const [sweepMeta, setSweepMeta] = useState(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [sourceMode, setSourceMode] = useState('demo'); // 'demo' | 'live'
 
   // Timeline state.
   const [minute, setMinute] = useState(0);
@@ -62,13 +63,13 @@ export default function App() {
       .catch((e) => console.error('scenarios failed', e.message));
   }, []);
 
-  // Alerts depend only on the scenario.
+  // Warning polygon advances with the storm — fetch per (scenario, frame).
   useEffect(() => {
     if (!scenario) return;
-    getDemoAlerts(scenario)
+    getDemoAlerts(scenario, { minute: frameMinute })
       .then(setAlerts)
       .catch(() => setAlerts({ type: 'FeatureCollection', features: [] }));
-  }, [scenario]);
+  }, [scenario, frameMinute]);
 
   // Analytics evolve with the storm — fetch per (scenario, frame), cached.
   useEffect(() => {
@@ -156,6 +157,8 @@ export default function App() {
       <div className="app-body">
         <Sidebar
           meta={activeMeta}
+          sourceMode={sourceMode}
+          onSourceMode={setSourceMode}
           field={field}
           onField={setField}
           opacity={opacity}

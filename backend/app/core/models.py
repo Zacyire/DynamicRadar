@@ -128,6 +128,8 @@ class AnalysisResult(BaseModel):
     radar_lon: float
     velocity_elevation_deg: float
     reflectivity_elevation_deg: float
+    max_reflectivity_dbz: float | None = None
+    peak_rotational_velocity_kt: float | None = None
     tornado_signatures: list[VortexSignature]
     hazards: list[HazardFlag]
     summary: str
