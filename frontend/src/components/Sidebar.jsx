@@ -29,6 +29,9 @@ export default function Sidebar({
   meta,
   sourceMode,
   onSourceMode,
+  liveStation,
+  onLiveStation,
+  liveStations = [],
   field,
   onField,
   opacity,
@@ -63,10 +66,22 @@ export default function Sidebar({
           </button>
         </div>
         {sourceMode === 'live' && (
-          <div className="muted small">
-            Live feed selected — wires to the NOAA `getSweep`/`getVolume` backend
-            (pick a WSR-88D station to stream). Showing demo data until connected.
-          </div>
+          <>
+            <label className="station-select">
+              <span className="muted small">NEXRAD Station</span>
+              <select value={liveStation} onChange={(e) => onLiveStation(e.target.value)}>
+                {liveStations.map((s) => (
+                  <option key={s.icao} value={s.icao}>
+                    {s.icao} — {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="muted small">
+              Streaming the latest real volume scan from NOAA S3 (auto-refreshes
+              every ~2.5 min). Requires a backend with open egress.
+            </div>
+          </>
         )}
       </section>
 

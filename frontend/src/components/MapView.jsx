@@ -1,11 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { getDemoSweep } from '../lib/api';
+import { getDemoSweep, getSweep } from '../lib/api';
 import { renderSweepToImage } from '../lib/radarRender';
 import { sampleGate } from '../lib/sample';
 
 const MS_TO_MPH = 2.2369362921;
+
+/** Add or update a raster image layer (kept below the warning polygons). */
+function ensureRasterLayer(map, id, frame) {
+  const srcId = `${id}-src`;
+  if (map.getSource(srcId)) {
+    map.getSource(srcId).updateImage({ url: frame.url, coordinates: frame.coordinates });
+  } else {
+    map.addSource(srcId, { type: 'image', url: frame.url, coordinates: frame.coordinates });
+    map.addLayer({
+      id,
+      type: 'raster',
+      source: srcId,
+      paint: { 'raster-opacity': 0, 'raster-resampling': 'linear', 'raster-fade-duration': 0 },
+    });
+    if (map.getLayer('alerts-fill')) map.moveLayer(id, 'alerts-fill');
+  }
+}
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -77,7 +94,19 @@ function sweepGeoJSON(center, radiusKm, leadDeg) {
  * fetched here and georeferenced client-side into a raster image overlay. The
  * camera flies to `camera` whenever it changes (driven by the search bar).
  */
-export default function MapView({ scenario, camera, field, minute = 0, alerts, analytics, opacity = 0.8, onSweepMeta }) {
+export default function MapView({
+  scenario,
+  sourceMode = 'demo',
+  station,
+  liveTick = 0,
+  camera,
+  field,
+  minute = 0,
+  alerts,
+  analytics,
+  opacity = 0.8,
+  onSweepMeta,
+}) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
@@ -89,6 +118,7 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
   const lastPtRef = useRef(null); // last cursor {point, lngLat}
   const [ready, setReady] = useState(false);
   const [renderMsg, setRenderMsg] = useState('');
+  const [loading, setLoading] = useState(false); // live fetch in flight
   const [tool, setTool] = useState('pointer'); // 'pointer' | 'crosshair'
   const [hud, setHud] = useState(null); // { x, y, z, v }
   const toolRef = useRef(tool);
@@ -126,10 +156,21 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
     abRef.current = { a: null, b: null };
   }, [scenario, field]);
 
-  // --- radar overlay: frame-interpolated crossfade by lifecycle minute --- //
+  const placeRadar = (map, s) => {
+    onSweepMeta?.(s);
+    if (markerRef.current) markerRef.current.remove();
+    markerRef.current = new mapboxgl.Marker({ color: '#4cc9f0' })
+      .setLngLat([s.radar_lon, s.radar_lat])
+      .setPopup(new mapboxgl.Popup().setText(`${s.station} · ${field}`))
+      .addTo(map);
+    const lastRange = s.ranges_m[s.ranges_m.length - 1] || 150000;
+    radarRef.current = { center: [s.radar_lon, s.radar_lat], radiusKm: lastRange / 1000 };
+  };
+
+  // --- DEMO overlay: frame-interpolated crossfade by lifecycle minute ---- //
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !scenario) return;
+    if (!map || !ready || sourceMode !== 'demo' || !scenario) return;
     let cancelled = false;
 
     const STEP = 5;
@@ -137,7 +178,6 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
     const f1 = Math.min(f0 + STEP, 120);
     const frac = f1 === f0 ? 0 : (minute - f0) / STEP;
 
-    // Fetch + render a frame (cached). Returns {sweep, url, coordinates}.
     const ensureFrame = (m) => {
       const key = `${scenario}|${field}|${m}`;
       const cache = frameCacheRef.current;
@@ -150,53 +190,16 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
       });
     };
 
-    const ensureLayer = (id, frame) => {
-      const srcId = `${id}-src`;
-      if (map.getSource(srcId)) {
-        map.getSource(srcId).updateImage({ url: frame.url, coordinates: frame.coordinates });
-      } else {
-        map.addSource(srcId, { type: 'image', url: frame.url, coordinates: frame.coordinates });
-        map.addLayer({
-          id,
-          type: 'raster',
-          source: srcId,
-          paint: { 'raster-opacity': 0, 'raster-resampling': 'linear', 'raster-fade-duration': 0 },
-        });
-        if (map.getLayer('alerts-fill')) map.moveLayer(id, 'alerts-fill');
-      }
-    };
-
     Promise.all([ensureFrame(f0), ensureFrame(f1)])
       .then(([frame0, frame1]) => {
         if (cancelled) return;
-        // Only swap a layer's image when its target frame changed.
-        if (abRef.current.a !== f0) {
-          ensureLayer('radar-a', frame0);
-          abRef.current.a = f0;
-        } else {
-          ensureLayer('radar-a', frame0);
-        }
-        if (abRef.current.b !== f1) {
-          ensureLayer('radar-b', frame1);
-          abRef.current.b = f1;
-        } else {
-          ensureLayer('radar-b', frame1);
-        }
-        // Crossfade opacities (scaled by the user opacity slider).
+        ensureRasterLayer(map, 'radar-a', frame0);
+        abRef.current.a = f0;
+        ensureRasterLayer(map, 'radar-b', frame1);
+        abRef.current.b = f1;
         if (map.getLayer('radar-a')) map.setPaintProperty('radar-a', 'raster-opacity', opacity * (1 - frac));
         if (map.getLayer('radar-b')) map.setPaintProperty('radar-b', 'raster-opacity', opacity * frac);
-
-        // Marker + sweep geometry from the leading frame.
-        const s = frame0.sweep;
-        onSweepMeta?.(s);
-        if (!markerRef.current) {
-          markerRef.current = new mapboxgl.Marker({ color: '#4cc9f0' })
-            .setLngLat([s.radar_lon, s.radar_lat])
-            .setPopup(new mapboxgl.Popup().setText(`${s.station} · ${field}`))
-            .addTo(map);
-        }
-        const lastRange = s.ranges_m[s.ranges_m.length - 1] || 150000;
-        radarRef.current = { center: [s.radar_lon, s.radar_lat], radiusKm: lastRange / 1000 };
+        placeRadar(map, frame0.sweep);
         setRenderMsg('');
       })
       .catch((err) => {
@@ -206,7 +209,44 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
     return () => {
       cancelled = true;
     };
-  }, [ready, scenario, field, minute, opacity]);
+  }, [ready, sourceMode, scenario, field, minute, opacity]);
+
+  // --- LIVE overlay: poll the latest real sweep for the station ---------- //
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || sourceMode !== 'live' || !station) return;
+    let cancelled = false;
+    setLoading(true);
+    setRenderMsg('');
+
+    getSweep(station, { field })
+      .then((sweep) => {
+        if (cancelled) return;
+        const { url, coordinates } = renderSweepToImage(sweep, { size: 1400 });
+        ensureRasterLayer(map, 'radar-a', { url, coordinates });
+        if (map.getLayer('radar-a')) map.setPaintProperty('radar-a', 'raster-opacity', opacity);
+        if (map.getLayer('radar-b')) map.setPaintProperty('radar-b', 'raster-opacity', 0);
+        placeRadar(map, sweep);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoading(false);
+        setRenderMsg(`Live fetch failed: ${err.message}`);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, sourceMode, station, field, liveTick]);
+
+  // Apply opacity in live mode (demo handles its own via the crossfade).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (sourceMode === 'live' && map?.getLayer('radar-a')) {
+      map.setPaintProperty('radar-a', 'raster-opacity', opacity);
+    }
+  }, [opacity, sourceMode]);
 
   // --- rotating radar sweep (scanning-dish animation) -------------------- //
   useEffect(() => {
@@ -284,9 +324,11 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
   // Fetch Z + V sweeps for the current frame whenever the crosshair is active.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || tool !== 'crosshair' || !scenario) return;
+    if (!map || !ready || tool !== 'crosshair') return;
+    const live = sourceMode === 'live';
+    if (live ? !station : !scenario) return;
     const m = Math.floor(minute / 5) * 5;
-    const key = `${scenario}|${m}`;
+    const key = live ? `live|${station}|${liveTick}` : `${scenario}|${m}`;
     const cache = sampleCacheRef.current;
     let cancelled = false;
     const apply = (pair) => {
@@ -297,10 +339,13 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
     if (cache.has(key)) {
       apply(cache.get(key));
     } else {
-      Promise.all([
-        getDemoSweep(scenario, { field: 'Z', minute: m }),
-        getDemoSweep(scenario, { field: 'V', minute: m }),
-      ])
+      const fetchZV = live
+        ? Promise.all([getSweep(station, { field: 'Z' }), getSweep(station, { field: 'V' })])
+        : Promise.all([
+            getDemoSweep(scenario, { field: 'Z', minute: m }),
+            getDemoSweep(scenario, { field: 'V', minute: m }),
+          ]);
+      fetchZV
         .then(([z, v]) => {
           const pair = { z, v };
           cache.set(key, pair);
@@ -311,7 +356,7 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
     return () => {
       cancelled = true;
     };
-  }, [ready, tool, scenario, minute]);
+  }, [ready, tool, sourceMode, scenario, station, minute, liveTick]);
 
   // Mouse handlers (registered once).
   useEffect(() => {
@@ -466,6 +511,13 @@ export default function MapView({ scenario, camera, field, minute = 0, alerts, a
               {hud.v == null ? '—' : `${(hud.v * MS_TO_MPH).toFixed(0)} MPH`}
             </span>
           </div>
+        </div>
+      )}
+
+      {loading && (
+        <div className="live-loading">
+          <div className="retro-spinner" />
+          <div className="live-loading-text">STREAMING LIVE NEXRAD…</div>
         </div>
       )}
 

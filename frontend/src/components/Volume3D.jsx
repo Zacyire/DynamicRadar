@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Grid, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { getDemoVolume } from '../lib/api';
+import { getDemoVolume, getVolume } from '../lib/api';
 import { beamHeight, buildVolumeGeometry, detectionScenePosition } from '../lib/volume3d';
 
 /** A soft radial sprite so points blend into a cohesive cloud (not dots). */
@@ -109,25 +109,42 @@ function RadarMarker() {
   );
 }
 
-export default function Volume3D({ scenario, field, minute = 0, analytics, vertExag = 4 }) {
+export default function Volume3D({
+  scenario,
+  sourceMode = 'demo',
+  station,
+  liveTick = 0,
+  field,
+  minute = 0,
+  analytics,
+  vertExag = 4,
+}) {
   const [volume, setVolume] = useState(null);
   const [status, setStatus] = useState('');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!scenario) return;
+    const live = sourceMode === 'live';
+    if (live ? !station : !scenario) return;
     let cancelled = false;
-    setStatus('Loading volume…');
-    getDemoVolume(scenario, { field, minute })
+    setStatus('');
+    setLoading(true);
+    const req = live ? getVolume(station, { field }) : getDemoVolume(scenario, { field, minute });
+    req
       .then((v) => {
         if (cancelled) return;
         setVolume(v);
-        setStatus('');
+        setLoading(false);
       })
-      .catch((e) => !cancelled && setStatus(`Volume: ${e.message}`));
+      .catch((e) => {
+        if (cancelled) return;
+        setLoading(false);
+        setStatus(`Volume: ${e.message}`);
+      });
     return () => {
       cancelled = true;
     };
-  }, [scenario, field, minute]);
+  }, [sourceMode, scenario, station, field, minute, liveTick]);
 
   const signatures = analytics?.tornado_signatures || [];
   // Cheap top-of-storm estimate (no dense cloud build): tallest tilt × range.
@@ -185,6 +202,12 @@ export default function Volume3D({ scenario, field, minute = 0, analytics, vertE
           </div>
         )}
       </div>
+      {loading && (
+        <div className="live-loading">
+          <div className="retro-spinner" />
+          <div className="live-loading-text">BUILDING LIVE VOLUME…</div>
+        </div>
+      )}
       {status && <div className="map-toast">{status}</div>}
     </div>
   );

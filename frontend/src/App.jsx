@@ -4,7 +4,17 @@ import Volume3D from './components/Volume3D';
 import Sidebar from './components/Sidebar';
 import SearchBar from './components/SearchBar';
 import Timeline from './components/Timeline';
-import { getDemoAlerts, getDemoAnalytics, getScenarios } from './lib/api';
+import {
+  getAlerts,
+  getAnalytics,
+  getDemoAlerts,
+  getDemoAnalytics,
+  getScenarios,
+} from './lib/api';
+import { LIVE_STATIONS, findStation } from './lib/stations';
+
+// Live polling cadence — NEXRAD sites finish a volume scan every few minutes.
+const LIVE_POLL_MS = 150000;
 
 /** Is there a circulation worth a 3D look? (TDS, or a couplet >= moderate.) */
 function hasSignificantCirculation(analytics) {
@@ -38,6 +48,8 @@ export default function App() {
   const [sweepMeta, setSweepMeta] = useState(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [sourceMode, setSourceMode] = useState('demo'); // 'demo' | 'live'
+  const [liveStation, setLiveStation] = useState('KTBW');
+  const [liveTick, setLiveTick] = useState(0); // bumps on each poll / manual refresh
 
   // Timeline state.
   const [minute, setMinute] = useState(0);
@@ -63,17 +75,17 @@ export default function App() {
       .catch((e) => console.error('scenarios failed', e.message));
   }, []);
 
-  // Warning polygon advances with the storm — fetch per (scenario, frame).
+  // DEMO: warning polygon advances with the storm — per (scenario, frame).
   useEffect(() => {
-    if (!scenario) return;
+    if (sourceMode !== 'demo' || !scenario) return;
     getDemoAlerts(scenario, { minute: frameMinute })
       .then(setAlerts)
       .catch(() => setAlerts({ type: 'FeatureCollection', features: [] }));
-  }, [scenario, frameMinute]);
+  }, [sourceMode, scenario, frameMinute]);
 
-  // Analytics evolve with the storm — fetch per (scenario, frame), cached.
+  // DEMO: analytics evolve with the storm — per (scenario, frame), cached.
   useEffect(() => {
-    if (!scenario) return;
+    if (sourceMode !== 'demo' || !scenario) return;
     const key = `${scenario}|${frameMinute}`;
     const cache = analyticsCache.current;
     if (cache.has(key)) {
@@ -90,7 +102,39 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [scenario, frameMinute]);
+  }, [sourceMode, scenario, frameMinute]);
+
+  // LIVE: poll real analytics + NWS alerts for the selected station.
+  useEffect(() => {
+    if (sourceMode !== 'live' || !liveStation) return;
+    let cancelled = false;
+    setAnalytics(null);
+    getAnalytics(liveStation)
+      .then((a) => !cancelled && setAnalytics(a))
+      .catch((e) => {
+        if (!cancelled) setAnalytics(null);
+        console.warn('live analytics', e.message);
+      });
+    const st = findStation(liveStation);
+    if (st) {
+      getAlerts(st.lat, st.lon, { radiusKm: 400 })
+        .then((fc) => !cancelled && setAlerts(fc))
+        .catch(() => !cancelled && setAlerts({ type: 'FeatureCollection', features: [] }));
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceMode, liveStation, liveTick]);
+
+  // LIVE: poll for new scans on a clean interval; fly to the station.
+  useEffect(() => {
+    if (sourceMode !== 'live') return;
+    setPlaying(false);
+    const st = findStation(liveStation);
+    if (st) setCamera({ center: [st.lon, st.lat], zoom: st.zoom });
+    const id = setInterval(() => setLiveTick((t) => t + 1), LIVE_POLL_MS);
+    return () => clearInterval(id);
+  }, [sourceMode, liveStation]);
 
   // Reset caches + clock when the scenario changes.
   useEffect(() => {
@@ -151,7 +195,9 @@ export default function App() {
             <button className={viewMode === '2d' ? 'active' : ''} onClick={() => setViewMode('2d')}>2D Map</button>
             <button className={viewMode === '3d' ? 'active' : ''} onClick={() => setViewMode('3d')}>3D Volume</button>
           </div>
-          <span className="app-status">{activeMeta ? `${activeMeta.station} · ${field}` : 'loading…'}</span>
+          <span className="app-status">
+            {sourceMode === 'live' ? `${liveStation} · ${field} · LIVE` : activeMeta ? `${activeMeta.station} · ${field}` : 'loading…'}
+          </span>
         </div>
       </header>
       <div className="app-body">
@@ -159,6 +205,9 @@ export default function App() {
           meta={activeMeta}
           sourceMode={sourceMode}
           onSourceMode={setSourceMode}
+          liveStation={liveStation}
+          onLiveStation={setLiveStation}
+          liveStations={LIVE_STATIONS}
           field={field}
           onField={setField}
           opacity={opacity}
@@ -171,7 +220,7 @@ export default function App() {
           onVertExag={setVertExag}
         />
         <div className="view-area">
-          <SearchBar onSelect={handleSearchSelect} activeScenario={scenario} />
+          {sourceMode === 'demo' && <SearchBar onSelect={handleSearchSelect} activeScenario={scenario} />}
           {showBanner && (
             <div className="circ-banner">
               <span>⚠ Circulation detected — inspect the vertical structure in 3D.</span>
@@ -184,6 +233,9 @@ export default function App() {
           {viewMode === '2d' ? (
             <MapView
               scenario={scenario}
+              sourceMode={sourceMode}
+              station={liveStation}
+              liveTick={liveTick}
               camera={camera}
               field={field}
               minute={minute}
@@ -193,22 +245,42 @@ export default function App() {
               onSweepMeta={setSweepMeta}
             />
           ) : (
-            <Volume3D scenario={scenario} field={field} minute={frameMinute} analytics={analytics} vertExag={vertExag} />
+            <Volume3D
+              scenario={scenario}
+              sourceMode={sourceMode}
+              station={liveStation}
+              liveTick={liveTick}
+              field={field}
+              minute={frameMinute}
+              analytics={analytics}
+              vertExag={vertExag}
+            />
           )}
         </div>
       </div>
-      <Timeline
-        minute={minute}
-        maxMinute={WINDOW}
-        step={STEP}
-        playing={playing}
-        speed={speed}
-        loop={loop}
-        onScrub={scrub}
-        onPlayPause={() => setPlaying((p) => !p)}
-        onSpeed={setSpeed}
-        onToggleLoop={() => setLoop((l) => !l)}
-      />
+      {sourceMode === 'demo' ? (
+        <Timeline
+          minute={minute}
+          maxMinute={WINDOW}
+          step={STEP}
+          playing={playing}
+          speed={speed}
+          loop={loop}
+          onScrub={scrub}
+          onPlayPause={() => setPlaying((p) => !p)}
+          onSpeed={setSpeed}
+          onToggleLoop={() => setLoop((l) => !l)}
+        />
+      ) : (
+        <div className="live-bar">
+          <span className="live-dot" />
+          <span className="live-label">LIVE NOAA FEED · {liveStation}</span>
+          <span className="live-meta">
+            {sweepMeta ? `Latest scan ${new Date(sweepMeta.scan_time).toUTCString().slice(17, 25)}Z` : 'streaming…'}
+          </span>
+          <button className="tl-btn small" onClick={() => setLiveTick((t) => t + 1)}>Refresh now</button>
+        </div>
+      )}
     </div>
   );
 }

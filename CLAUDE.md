@@ -118,9 +118,12 @@ Each demo scenario is a *living* simulation over a 2-hour window (5-min steps,
 ## Workstation UI extras
 - **Inspect crosshair** (`MapView` tool menu + `lib/sample.js`): O(1) polar
   lookup of Z & V under the cursor → floating HUD (dBZ / MPH). No canvas reads.
-- **Station Source switch** (Sidebar): Demo ⇄ Live NOAA. `App.sourceMode` is
-  wired; Live is a stub that will point the existing `getSweep`/`getVolume`
-  helpers at a station.
+- **Station Source switch** (Sidebar): Demo ⇄ Live NOAA. In **Live** mode a
+  station dropdown (`lib/stations.py` → KTBW/KTLX/KOKX/KHGX) drives the live
+  endpoints; `App` polls `getSweep`/`getVolume`/`getAnalytics` every ~2.5 min
+  (and on manual refresh), a retro spinner shows while a scan downloads, and
+  the timeline is replaced by a LIVE status bar. NWS alerts come from the real
+  feed (needs open egress; degrades to empty when blocked).
 - **Meteorological Log** (Sidebar): per-frame max core dBZ, peak rotational
   shear (kt/mph), and an estimated hail size — driven by new
   `AnalysisResult.max_reflectivity_dbz` / `peak_rotational_velocity_kt`.
