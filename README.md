@@ -35,11 +35,11 @@ DynamicRadar/
 
 ## Core Features (build roadmap)
 
-- [x] **Phase 1 — Project scaffolding** (this commit)
-- [ ] **Phase 2 — Backend data pipeline**: fetch + decode latest sweep per station
-- [ ] **Phase 3 — Analytics engine**: TVS/TDS detection, wind/width estimation, hazard classification (hail/snow/wind)
-- [ ] **Phase 4 — Frontend 2D & alerts**: Mapbox, auto-location to nearest radar, NWS warning polygons, 2D reflectivity/velocity/CC plotting
-- [ ] **Phase 5 — 3D volumetric view**: Three.js rendering of mesocyclone/tornado structure from elevation sweeps
+- [x] **Phase 1 — Project scaffolding**
+- [x] **Phase 2 — Backend data pipeline**: fetch + decode latest sweep per station
+- [x] **Phase 3 — Analytics engine**: TVS/TDS detection, wind/width estimation, hazard classification (hail/snow/wind)
+- [x] **Phase 4 — Frontend 2D & alerts**: Mapbox, auto-location to nearest radar, NWS warning polygons, 2D reflectivity/velocity/CC plotting
+- [x] **Phase 5 — 3D volumetric view**: Three.js rendering of mesocyclone/tornado structure from elevation sweeps
 
 ## Getting Started
 

@@ -22,6 +22,9 @@ export default function Sidebar({
   analytics,
   sweepMeta,
   onRefresh,
+  viewMode,
+  vertExag,
+  onVertExag,
 }) {
   return (
     <aside className="sidebar">
@@ -58,14 +61,25 @@ export default function Sidebar({
             </button>
           ))}
         </div>
-        <label className="slider">
-          Opacity
-          <input
-            type="range" min="0.2" max="1" step="0.05"
-            value={opacity}
-            onChange={(e) => onOpacity(parseFloat(e.target.value))}
-          />
-        </label>
+        {viewMode === '2d' ? (
+          <label className="slider">
+            Opacity
+            <input
+              type="range" min="0.2" max="1" step="0.05"
+              value={opacity}
+              onChange={(e) => onOpacity(parseFloat(e.target.value))}
+            />
+          </label>
+        ) : (
+          <label className="slider">
+            Vertical exaggeration ×{vertExag}
+            <input
+              type="range" min="1" max="10" step="1"
+              value={vertExag}
+              onChange={(e) => onVertExag(parseInt(e.target.value, 10))}
+            />
+          </label>
+        )}
       </section>
 
       <section className="card">

@@ -147,6 +147,24 @@ def lowest_sweep_with_field(radar, field: str) -> int:
     raise ValueError(f"No sweep contains valid data for field {field!r}")
 
 
+def unique_elevation_sweeps(radar, field: str) -> list[int]:
+    """One sweep index per distinct elevation that has valid ``field`` data.
+
+    NEXRAD repeats low elevations as split cuts (separate Z and V sweeps at the
+    same tilt); for volumetric stacking we want a single sweep per physical
+    tilt, ordered from lowest to highest elevation.
+    """
+    fixed = radar.fixed_angle["data"]
+    chosen: dict[float, int] = {}
+    for s in np.argsort(fixed):
+        s = int(s)
+        if not _sweep_has_field(radar, field, s):
+            continue
+        key = round(float(fixed[s]), 2)
+        chosen.setdefault(key, s)
+    return [chosen[k] for k in sorted(chosen)]
+
+
 def _nyquist(radar, sweep: int) -> float | None:
     inst = radar.instrument_parameters or {}
     nyq = inst.get("nyquist_velocity")
@@ -163,6 +181,7 @@ def extract_sweep(
     *,
     max_range_km: float | None = 300.0,
     range_stride: int = 1,
+    az_stride: int = 1,
     decimals: int = 1,
 ) -> dict:
     """Extract one field/sweep as JSON-serializable polar data.
@@ -177,6 +196,9 @@ def extract_sweep(
         Drop gates beyond this slant range (``None`` keeps all).
     range_stride
         Keep every Nth range gate to bound payload size.
+    az_stride
+        Keep every Nth ray (azimuth) to bound payload size (used by the 3D
+        volume endpoint, which stacks many tilts).
     decimals
         Round data values to this many decimals.
     """
@@ -191,6 +213,11 @@ def extract_sweep(
     azimuths = radar.azimuth["data"][sl]
     ranges = radar.range["data"]
     data = radar.fields[field]["data"][sl]
+
+    # Azimuth (ray) downsampling.
+    if az_stride > 1:
+        azimuths = azimuths[::az_stride]
+        data = data[::az_stride, :]
 
     # Range gating.
     gate_mask = np.ones(ranges.shape[0], dtype=bool)

@@ -56,6 +56,16 @@ export function getAnalytics(station) {
   return request(`/api/analytics/${station}`);
 }
 
+/** All elevation tilts of one moment for 3D volumetric stacking. */
+export function getVolume(station, { field = 'Z', maxRangeKm = 150, rangeStride = 4, azStride = 3 } = {}) {
+  return request(`/api/radar/${station}/volume`, {
+    field,
+    max_range_km: maxRangeKm,
+    range_stride: rangeStride,
+    az_stride: azStride,
+  });
+}
+
 /** Live NWS warning polygons (GeoJSON FeatureCollection). */
 export function getAlerts(lat, lon, { radiusKm = 600, demo = false } = {}) {
   return request('/api/alerts/active', { lat, lon, radius_km: radiusKm, demo: demo || null });

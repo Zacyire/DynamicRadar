@@ -97,3 +97,69 @@ def sweep(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return SweepData(station=station.upper(), **result)
+
+
+@router.get("/{station}/volume")
+def volume(
+    station: str,
+    field: str = Query("reflectivity", description="Z, V, CC or full field name"),
+    max_range_km: float = Query(150.0, gt=0),
+    range_stride: int = Query(4, ge=1, le=20),
+    az_stride: int = Query(3, ge=1, le=10),
+    max_tilts: int = Query(12, ge=1, le=20),
+) -> dict:
+    """All elevation tilts of one moment, for 3D volumetric stacking.
+
+    Returns one downsampled polar sweep per distinct elevation angle (lowest to
+    highest). Velocity is dealiased first so the couplet reads cleanly in 3D.
+    The frontend computes beam height per gate and stacks the tilts vertically.
+    """
+    try:
+        py_field = radar_decode.resolve_field(field)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _, radar = _load_latest(station)
+
+    # Use dealiased velocity so folds don't corrupt the 3D couplet structure.
+    if py_field == "velocity":
+        py_field = radar_decode.ensure_dealiased_velocity(radar)
+
+    sweep_indices = radar_decode.unique_elevation_sweeps(radar, py_field)[:max_tilts]
+    if not sweep_indices:
+        raise HTTPException(
+            status_code=404, detail=f"No valid {field!r} sweeps in latest {station.upper()} volume"
+        )
+
+    sweeps = []
+    meta = None
+    for s in sweep_indices:
+        d = radar_decode.extract_sweep(
+            radar, py_field, sweep=s,
+            max_range_km=max_range_km, range_stride=range_stride, az_stride=az_stride,
+        )
+        if meta is None:
+            meta = d
+        sweeps.append(
+            {
+                "elevation_deg": d["elevation_deg"],
+                "nyquist_velocity": d["nyquist_velocity"],
+                "azimuths": d["azimuths"],
+                "ranges_m": d["ranges_m"],
+                "data": d["data"],
+            }
+        )
+
+    return {
+        "station": station.upper(),
+        "field": meta["field"],
+        "long_name": meta["long_name"],
+        "units": meta["units"],
+        "scan_time": meta["scan_time"],
+        "radar_lat": meta["radar_lat"],
+        "radar_lon": meta["radar_lon"],
+        "radar_alt_m": meta["radar_alt_m"],
+        "n_tilts": len(sweeps),
+        "elevations_deg": [s["elevation_deg"] for s in sweeps],
+        "sweeps": sweeps,
+    }
