@@ -74,11 +74,13 @@ function sweepGeoJSON(center, radiusKm, leadDeg) {
  * fetched here and georeferenced client-side into a raster image overlay. The
  * camera flies to `camera` whenever it changes (driven by the search bar).
  */
-export default function MapView({ scenario, camera, field, alerts, analytics, opacity = 0.8, onSweepMeta }) {
+export default function MapView({ scenario, camera, field, minute = 0, alerts, analytics, opacity = 0.8, onSweepMeta }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const radarRef = useRef(null); // { center: [lon,lat], radiusKm } for the sweep
+  const frameCacheRef = useRef(new Map()); // `${scenario}|${field}|${m}` -> {sweep,url,coordinates}
+  const abRef = useRef({ a: null, b: null }); // minute currently shown on each layer
   const [ready, setReady] = useState(false);
   const [renderMsg, setRenderMsg] = useState('');
 
@@ -108,40 +110,83 @@ export default function MapView({ scenario, camera, field, alerts, analytics, op
     map.flyTo({ center: camera.center, zoom: camera.zoom, speed: 1.3, essential: true });
   }, [ready, camera]);
 
-  // --- radar overlay: fetch demo sweep + render image source ------------- //
+  // Drop cached frames when the storm or product changes.
+  useEffect(() => {
+    frameCacheRef.current.clear();
+    abRef.current = { a: null, b: null };
+  }, [scenario, field]);
+
+  // --- radar overlay: frame-interpolated crossfade by lifecycle minute --- //
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || !scenario) return;
     let cancelled = false;
-    setRenderMsg('Loading sweep…');
 
-    getDemoSweep(scenario, { field })
-      .then((sweep) => {
-        if (cancelled) return;
-        onSweepMeta?.(sweep);
+    const STEP = 5;
+    const f0 = Math.floor(minute / STEP) * STEP;
+    const f1 = Math.min(f0 + STEP, 120);
+    const frac = f1 === f0 ? 0 : (minute - f0) / STEP;
+
+    // Fetch + render a frame (cached). Returns {sweep, url, coordinates}.
+    const ensureFrame = (m) => {
+      const key = `${scenario}|${field}|${m}`;
+      const cache = frameCacheRef.current;
+      if (cache.has(key)) return Promise.resolve(cache.get(key));
+      return getDemoSweep(scenario, { field, minute: m }).then((sweep) => {
         const { url, coordinates } = renderSweepToImage(sweep, { size: 1400 });
-        const src = map.getSource('radar-src');
-        if (src) {
-          src.updateImage({ url, coordinates });
+        const frame = { sweep, url, coordinates };
+        cache.set(key, frame);
+        return frame;
+      });
+    };
+
+    const ensureLayer = (id, frame) => {
+      const srcId = `${id}-src`;
+      if (map.getSource(srcId)) {
+        map.getSource(srcId).updateImage({ url: frame.url, coordinates: frame.coordinates });
+      } else {
+        map.addSource(srcId, { type: 'image', url: frame.url, coordinates: frame.coordinates });
+        map.addLayer({
+          id,
+          type: 'raster',
+          source: srcId,
+          paint: { 'raster-opacity': 0, 'raster-resampling': 'linear', 'raster-fade-duration': 0 },
+        });
+        if (map.getLayer('alerts-fill')) map.moveLayer(id, 'alerts-fill');
+      }
+    };
+
+    Promise.all([ensureFrame(f0), ensureFrame(f1)])
+      .then(([frame0, frame1]) => {
+        if (cancelled) return;
+        // Only swap a layer's image when its target frame changed.
+        if (abRef.current.a !== f0) {
+          ensureLayer('radar-a', frame0);
+          abRef.current.a = f0;
         } else {
-          map.addSource('radar-src', { type: 'image', url, coordinates });
-          map.addLayer({
-            id: 'radar-layer',
-            type: 'raster',
-            source: 'radar-src',
-            paint: { 'raster-opacity': opacity, 'raster-resampling': 'linear', 'raster-fade-duration': 0 },
-          });
-          // Keep warning polygons above radar.
-          if (map.getLayer('alerts-line')) map.moveLayer('radar-layer', 'alerts-fill');
+          ensureLayer('radar-a', frame0);
         }
-        // Radar-site marker + sweep center/radius.
-        if (markerRef.current) markerRef.current.remove();
-        markerRef.current = new mapboxgl.Marker({ color: '#4cc9f0' })
-          .setLngLat([sweep.radar_lon, sweep.radar_lat])
-          .setPopup(new mapboxgl.Popup().setText(`${sweep.station} · ${field}`))
-          .addTo(map);
-        const lastRange = sweep.ranges_m[sweep.ranges_m.length - 1] || 150000;
-        radarRef.current = { center: [sweep.radar_lon, sweep.radar_lat], radiusKm: lastRange / 1000 };
+        if (abRef.current.b !== f1) {
+          ensureLayer('radar-b', frame1);
+          abRef.current.b = f1;
+        } else {
+          ensureLayer('radar-b', frame1);
+        }
+        // Crossfade opacities (scaled by the user opacity slider).
+        if (map.getLayer('radar-a')) map.setPaintProperty('radar-a', 'raster-opacity', opacity * (1 - frac));
+        if (map.getLayer('radar-b')) map.setPaintProperty('radar-b', 'raster-opacity', opacity * frac);
+
+        // Marker + sweep geometry from the leading frame.
+        const s = frame0.sweep;
+        onSweepMeta?.(s);
+        if (!markerRef.current) {
+          markerRef.current = new mapboxgl.Marker({ color: '#4cc9f0' })
+            .setLngLat([s.radar_lon, s.radar_lat])
+            .setPopup(new mapboxgl.Popup().setText(`${s.station} · ${field}`))
+            .addTo(map);
+        }
+        const lastRange = s.ranges_m[s.ranges_m.length - 1] || 150000;
+        radarRef.current = { center: [s.radar_lon, s.radar_lat], radiusKm: lastRange / 1000 };
         setRenderMsg('');
       })
       .catch((err) => {
@@ -151,13 +196,7 @@ export default function MapView({ scenario, camera, field, alerts, analytics, op
     return () => {
       cancelled = true;
     };
-  }, [ready, scenario, field]);
-
-  // --- opacity ----------------------------------------------------------- //
-  useEffect(() => {
-    const map = mapRef.current;
-    if (map?.getLayer('radar-layer')) map.setPaintProperty('radar-layer', 'raster-opacity', opacity);
-  }, [opacity]);
+  }, [ready, scenario, field, minute, opacity]);
 
   // --- rotating radar sweep (scanning-dish animation) -------------------- //
   useEffect(() => {

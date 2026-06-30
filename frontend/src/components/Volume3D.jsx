@@ -109,7 +109,7 @@ function RadarMarker() {
   );
 }
 
-export default function Volume3D({ scenario, field, analytics, vertExag = 4 }) {
+export default function Volume3D({ scenario, field, minute = 0, analytics, vertExag = 4 }) {
   const [volume, setVolume] = useState(null);
   const [status, setStatus] = useState('');
 
@@ -117,8 +117,7 @@ export default function Volume3D({ scenario, field, analytics, vertExag = 4 }) {
     if (!scenario) return;
     let cancelled = false;
     setStatus('Loading volume…');
-    setVolume(null);
-    getDemoVolume(scenario, { field })
+    getDemoVolume(scenario, { field, minute })
       .then((v) => {
         if (cancelled) return;
         setVolume(v);
@@ -128,7 +127,7 @@ export default function Volume3D({ scenario, field, analytics, vertExag = 4 }) {
     return () => {
       cancelled = true;
     };
-  }, [scenario, field]);
+  }, [scenario, field, minute]);
 
   const signatures = analytics?.tornado_signatures || [];
   // Cheap top-of-storm estimate (no dense cloud build): tallest tilt × range.

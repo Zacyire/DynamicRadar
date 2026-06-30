@@ -31,22 +31,30 @@ def _check(scenario: str) -> None:
         )
 
 
+# Lifecycle minute within the 2-hour playback window.
+_MINUTE = Query(0.0, ge=0, le=demo_scenarios.WINDOW_MIN, description="Lifecycle minute (0–120)")
+
+
 @router.get("/scenarios")
 def list_scenarios() -> dict:
-    """All available demo scenarios with their map centers and descriptions."""
-    return {"scenarios": demo_scenarios.scenario_list()}
+    """All available demo scenarios + the shared playback-timeline parameters."""
+    return {
+        "scenarios": demo_scenarios.scenario_list(),
+        "timeline": demo_scenarios.timeline_meta(),
+    }
 
 
 @router.get("/{scenario}/sweep", response_model=SweepData)
 def sweep(
     scenario: str,
     field: str = Query("reflectivity", description="Z, V, CC or full field name"),
+    minute: float = _MINUTE,
     range_stride: int = Query(1, ge=1, le=10),
 ) -> SweepData:
-    """One synthetic polar sweep (2D plotting)."""
+    """One synthetic polar sweep at lifecycle `minute` (2D plotting)."""
     _check(scenario)
     py_field = _resolve_field(field)
-    result = demo_scenarios.build_sweep(scenario, py_field, range_stride=range_stride)
+    result = demo_scenarios.build_sweep(scenario, py_field, minute=minute, range_stride=range_stride)
     return SweepData(station=demo_scenarios.SCENARIOS[scenario]["station"], **result)
 
 
@@ -54,20 +62,21 @@ def sweep(
 def volume(
     scenario: str,
     field: str = Query("reflectivity", description="Z, V, CC or full field name"),
+    minute: float = _MINUTE,
 ) -> dict:
-    """All elevation tilts of a synthetic scenario (3D stacking)."""
+    """All elevation tilts of a synthetic scenario at lifecycle `minute` (3D)."""
     _check(scenario)
     py_field = _resolve_field(field)
-    return demo_scenarios.build_volume(scenario, py_field)
+    return demo_scenarios.build_volume(scenario, py_field, minute=minute)
 
 
 @router.get("/{scenario}/analytics", response_model=AnalysisResult)
-def scenario_analytics(scenario: str) -> AnalysisResult:
-    """Run the storm-analytics engine on a synthetic scenario."""
+def scenario_analytics(scenario: str, minute: float = _MINUTE) -> AnalysisResult:
+    """Run the storm-analytics engine on a synthetic scenario at `minute`."""
     _check(scenario)
-    vel = demo_scenarios.build_sweep(scenario, "velocity")
-    refl = demo_scenarios.build_sweep(scenario, "reflectivity")
-    cc = demo_scenarios.build_sweep(scenario, "cross_correlation_ratio")
+    vel = demo_scenarios.build_sweep(scenario, "velocity", minute=minute)
+    refl = demo_scenarios.build_sweep(scenario, "reflectivity", minute=minute)
+    cc = demo_scenarios.build_sweep(scenario, "cross_correlation_ratio", minute=minute)
     result = analytics.analyze(vel, refl, cc, nyquist=demo_scenarios.NYQUIST)
     return AnalysisResult(station=demo_scenarios.SCENARIOS[scenario]["station"], **result)
 

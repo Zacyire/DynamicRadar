@@ -99,6 +99,18 @@ The UI is driven by a selected **demo scenario** rather than live geolocation.
 - Live endpoints still exist; `_load_latest` now returns **502** (not 500) when
   the S3 provider is blocked, pointing clients at `/api/demo/scenarios`.
 
+## Playback timeline (storm lifecycle)
+Each demo scenario is a *living* simulation over a 2-hour window (5-min steps,
+25 frames), driven by a `minute` (0–120) query param on the demo endpoints.
+- `demo_scenarios.py` field funcs take `minute`; lifecycle envelopes
+  (`_smoothstep`/`_bell`) evolve reflectivity, velocity and CC **together** so the
+  couplet tightens exactly as the hook echo peaks. Tornado arc: rain blob →
+  hook (~30) → TVS+TDS peak (~60) → weakening (~90) → dissipation (~120).
+- Frontend `components/Timeline.jsx` (bottom bar): play/pause/loop, 1×/2×/5×,
+  digital sim-clock. `App` runs the playback rAF; **2D crossfades** two adjacent
+  5-min frames (`MapView` radar-a/radar-b layers) for smooth scrubbing; 3D +
+  analytics snap to the nearest frame (cached).
+
 ## Status & next ideas
 - **Done:** Phases 1–5 + offline demo-scenario search, committed/pushed to
   `claude/dynamic-radar-project-init-l5ta0z`.

@@ -77,16 +77,16 @@ export function getScenarios() {
   return request('/api/demo/scenarios');
 }
 
-export function getDemoSweep(scenario, { field = 'Z', rangeStride = 1 } = {}) {
-  return request(`/api/demo/${scenario}/sweep`, { field, range_stride: rangeStride });
+export function getDemoSweep(scenario, { field = 'Z', rangeStride = 1, minute = 0 } = {}) {
+  return request(`/api/demo/${scenario}/sweep`, { field, range_stride: rangeStride, minute });
 }
 
-export function getDemoVolume(scenario, { field = 'Z' } = {}) {
-  return request(`/api/demo/${scenario}/volume`, { field });
+export function getDemoVolume(scenario, { field = 'Z', minute = 0 } = {}) {
+  return request(`/api/demo/${scenario}/volume`, { field, minute });
 }
 
-export function getDemoAnalytics(scenario) {
-  return request(`/api/demo/${scenario}/analytics`);
+export function getDemoAnalytics(scenario, { minute = 0 } = {}) {
+  return request(`/api/demo/${scenario}/analytics`, { minute });
 }
 
 export function getDemoAlerts(scenario) {

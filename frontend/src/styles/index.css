@@ -215,6 +215,109 @@ body {
   border-radius: 10px;
 }
 
+/* --- Playback timeline --- */
+.timeline {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  height: 64px;
+  flex-shrink: 0;
+  padding: 0 1.1rem;
+  background: linear-gradient(180deg, #0d1426, #0a0f1f);
+  border-top: 1px solid var(--border);
+}
+
+.tl-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.tl-btn {
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.tl-btn.primary {
+  background: var(--accent);
+  color: #061018;
+  font-weight: 700;
+}
+
+.tl-btn.active {
+  background: var(--accent);
+  color: #061018;
+}
+
+.tl-btn.small {
+  min-width: 30px;
+  height: 30px;
+  font-size: 0.78rem;
+}
+
+.tl-speed {
+  display: flex;
+  gap: 0.2rem;
+  margin-left: 0.4rem;
+}
+
+.tl-scrub {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.tl-scrub input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+  z-index: 2;
+}
+
+.tl-ticks {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 0;
+  pointer-events: none;
+}
+
+.tl-tick {
+  position: absolute;
+  width: 1px;
+  height: 8px;
+  margin-top: -4px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.tl-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 120px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-time {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.5px;
+}
+
+.tl-elapsed {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 .app-body {
   flex: 1;
   display: flex;

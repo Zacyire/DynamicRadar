@@ -364,7 +364,10 @@ def classify_hazards(
             zmax = float(refl.data.max())
             cc_echo = cc.data[echo]
             cc_med = float(np.ma.median(cc_echo)) if np.ma.count(cc_echo) else 0.0
-            coverage = n_echo / max(int(np.ma.count(refl.data)), 1)
+            # Coverage is echo area relative to the whole scan domain (not just
+            # the echo), so a small dissipating cell doesn't read as widespread
+            # stratiform snow — only genuinely broad coverage qualifies.
+            coverage = n_echo / max(refl.data.size, 1)
             if cc_med >= SNOW_CC_MIN and zmax <= SNOW_Z_MAX and zmed <= 30 and coverage >= 0.25:
                 hazards.append(
                     {"type": "snow", "severity": "moderate" if zmed >= 15 else "low",

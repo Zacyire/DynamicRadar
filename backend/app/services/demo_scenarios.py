@@ -12,9 +12,36 @@ network, no Py-ART, pure numpy.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
+
+# --------------------------------------------------------------------------- #
+# Playback timeline                                                            #
+# --------------------------------------------------------------------------- #
+# Each scenario is a *living* simulation over a 2-hour window in 5-minute steps.
+# The `minute` argument (0..120) drives the storm's lifecycle, so reflectivity,
+# velocity and CC all evolve together and stay perfectly in sync.
+
+WINDOW_MIN = 120
+STEP_MIN = 5
+N_FRAMES = WINDOW_MIN // STEP_MIN + 1  # 25 frames (0,5,…,120)
+# Simulated wall-clock start (a classic Oklahoma tornado evening).
+BASE_TIME = datetime(2024, 5, 20, 16, 0, 0, tzinfo=timezone.utc)
+
+
+def _smoothstep(a: float, b: float, x: float) -> float:
+    """Hermite ramp 0→1 across [a, b]."""
+    if a == b:
+        return float(x >= b)
+    t = min(max((x - a) / (b - a), 0.0), 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _bell(x: float, mu: float, sigma: float) -> float:
+    """Gaussian bump, peak 1.0 at x == mu."""
+    return float(np.exp(-(((x - mu) / sigma) ** 2)))
+
 
 # --------------------------------------------------------------------------- #
 # Scenario catalogue                                                           #
@@ -98,26 +125,50 @@ def _ang_diff(az_grid, center):
     return (az_grid - center + 180.0) % 360.0 - 180.0
 
 
-def _tornado(AZ, RNG, elev):
-    azc, rc = 225.0, 45000.0
+def _tornado(AZ, RNG, elev, minute=0.0):
+    """A supercell lifecycle over the 2-hour window.
+
+    * ~0 min   — heavy rain blob, rounded, no rotation.
+    * ~30 min  — a sharp hook echo curls inward; rotation begins.
+    * ~60 min  — PEAK: high-Z core, tight velocity couplet, debris ball (TDS).
+    * ~90 min  — weakening; hook and couplet relax.
+    * ~120 min — dissipated.
+
+    Reflectivity, velocity and CC are all driven by the same lifecycle terms,
+    so the wind circulation tightens exactly as the hook echo peaks.
+    """
+    # Storm tracks toward / past the radar over the window (NE motion).
+    track = _smoothstep(0, 120, minute)
+    azc = 232.0 - 14.0 * track
+    rc = 62000.0 - 26000.0 * track
+
+    # Lifecycle envelopes.
+    presence = 1.0 - _smoothstep(92, 120, minute)            # dissipates by ~120
+    hook_amp = _smoothstep(18, 38, minute) * (1.0 - _smoothstep(80, 112, minute))
+    couplet_amp = _bell(minute, 62, 24)                      # rotation, peak @62
+    tds_depth = 0.55 * min(max((minute - 48) / 12.0, 0.0), 1.0) * (1.0 - _smoothstep(72, 102, minute))
+    core_peak = 50.0 + 14.0 * _bell(minute, 62, 40)          # ~50 dBZ blob → 64 dBZ core
+
     daz = _ang_diff(AZ, azc)
 
-    # Reflectivity: rounded core + a hooked appendage on the rear flank.
-    core = 62.0 * np.exp(-((daz / 8.0) ** 2) - ((RNG - rc) / 9000.0) ** 2)
-    hook = 48.0 * np.exp(-(((daz - 13.0) / 4.0) ** 2) - ((RNG - (rc - 6500.0)) / 4000.0) ** 2)
-    Z = np.maximum(core, hook)
+    # Reflectivity: rounded rain core + a hook that sharpens at maturity.
+    core = core_peak * np.exp(-((daz / 8.0) ** 2) - ((RNG - rc) / 9000.0) ** 2)
+    hook = (44.0 + 10.0 * _bell(minute, 62, 30)) * hook_amp * np.exp(
+        -(((daz - (9.0 + 4.0 * hook_amp)) / 4.0) ** 2) - ((RNG - (rc - 6500.0)) / 4200.0) ** 2
+    )
+    Z = np.maximum(core, hook) * presence
 
-    # Velocity couplet at the mesocyclone — tilts with height (storm-relative).
+    # Velocity couplet — tilts with height and TIGHTENS (smaller radial sigma)
+    # as the circulation matures, peaking with the hook.
     shift = (elev - 0.5) * 3.0
     dazv = _ang_diff(AZ, azc + shift)
-    radial = np.exp(-(((RNG - rc) / 5000.0) ** 2))
-    V = 33.0 * np.tanh(dazv / 1.5) * np.exp(-((dazv / 9.0) ** 2)) * radial
+    radial = np.exp(-(((RNG - rc) / (4800.0 - 1500.0 * couplet_amp)) ** 2))
+    V = couplet_amp * 34.0 * np.tanh(dazv / 1.4) * np.exp(-((dazv / 9.0) ** 2)) * radial
 
-    # CC: healthy rain, with a debris ball (low CC) at the couplet.
+    # CC: healthy rain, dropping to a debris ball (TDS) only near peak intensity.
     CC = np.full_like(Z, 0.985)
-    CC -= 0.52 * np.exp(-((daz / 4.0) ** 2) - ((RNG - rc) / 4000.0) ** 2)
+    CC -= tds_depth * np.exp(-((daz / 3.5) ** 2) - ((RNG - rc) / 3800.0) ** 2)
 
-    # Mask to the precipitation footprint.
     echo = Z >= 5.0
     Z = np.where(echo, Z, np.nan)
     V = np.where(echo, V, np.nan)
@@ -125,51 +176,55 @@ def _tornado(AZ, RNG, elev):
     return Z, V, CC
 
 
-def _hurricane(AZ, RNG, elev):
-    # Eye ~35 km north-east of the radar.
-    eye_e, eye_n = 22000.0, 28000.0
+def _hurricane(AZ, RNG, elev, minute=0.0):
+    # Eye drifts NNE and the core intensifies then eases across the window.
+    track = _smoothstep(0, 120, minute)
+    eye_e = 22000.0 + 8000.0 * track
+    eye_n = 28000.0 + 10000.0 * track
+    intensify = 0.8 + 0.35 * _bell(minute, 60, 55)
+
     gx = RNG * np.sin(np.radians(AZ))
     gy = RNG * np.cos(np.radians(AZ))
     dx, dy = gx - eye_e, gy - eye_n
     d = np.hypot(dx, dy) + 1.0
 
-    # Spiral-band reflectivity; suppressed in the calm eye.
-    spiral = np.sin(np.radians(AZ) * 2.0 + d / 7000.0)
+    spiral = np.sin(np.radians(AZ) * 2.0 + d / 7000.0 - minute / 15.0)  # bands rotate
     Z = 22.0 + 20.0 * np.clip(spiral, 0, 1) + 12.0 * np.exp(-((d - 24000.0) / 9000.0) ** 2)
+    Z = Z * intensify
     Z = np.where(d < 8000.0, np.nan, Z)  # eye
     Z = np.where((Z >= 5.0) | np.isnan(Z), Z, np.nan)
 
-    # Cyclonic tangential wind (Rankine vortex) projected onto the radar radial.
-    rmax, vmax = 22000.0, 46.0
+    rmax, vmax = 22000.0, 46.0 * intensify
     Vt = np.where(d < rmax, vmax * d / rmax, vmax * rmax / d)
-    that_x, that_y = -dy / d, dx / d            # counter-clockwise tangent
+    that_x, that_y = -dy / d, dx / d
     rhat_x, rhat_y = np.sin(np.radians(AZ)), np.cos(np.radians(AZ))
     V = Vt * (that_x * rhat_x + that_y * rhat_y) * (1.0 - 0.08 * (elev - 0.5))
     V = np.where(np.isnan(Z), np.nan, V)
 
-    CC = np.where(np.isnan(Z), np.nan, 0.985)   # uniform tropical rain
+    CC = np.where(np.isnan(Z), np.nan, 0.985)
     return Z, V, CC
 
 
-def _squall(AZ, RNG, elev):
+def _squall(AZ, RNG, elev, minute=0.0):
     gx = RNG * np.sin(np.radians(AZ))
     gy = RNG * np.cos(np.radians(AZ))
 
-    # A north-south line that bows eastward, ~40 km east of the radar.
-    line_x = 40000.0 - 0.00018 * gy**2          # bow (convex east)
+    # The line propagates eastward across the window and intensifies mid-life.
+    advance = -30000.0 + 70000.0 * _smoothstep(0, 120, minute)
+    intensify = 0.7 + 0.4 * _bell(minute, 55, 45)
+    line_x = 40000.0 + advance - 0.00018 * gy**2
     dist = gx - line_x
-    Z = 58.0 * np.exp(-((dist / 6000.0) ** 2))
+    Z = 58.0 * intensify * np.exp(-((dist / 6000.0) ** 2))
     Z = np.where(np.abs(gy) < 90000.0, Z, np.nan)
 
-    # Strong outbound (eastward) flow behind the line → radial divergence.
-    V = 30.0 * np.exp(-((dist + 4000.0) / 9000.0) ** 2) + 4.0
+    V = (30.0 * intensify * np.exp(-((dist + 4000.0) / 9000.0) ** 2) + 4.0)
     V = np.where(np.isnan(Z) | (Z < 5.0), np.nan, V)
     Z = np.where(Z >= 5.0, Z, np.nan)
     CC = np.where(np.isnan(Z), np.nan, 0.97)
     return Z, V, CC
 
 
-def _clear(AZ, RNG, elev):
+def _clear(AZ, RNG, elev, minute=0.0):
     nan = np.full(AZ.shape, np.nan)
     return nan, nan.copy(), nan.copy()
 
@@ -191,8 +246,10 @@ def _rows(arr: np.ndarray) -> list[list[float | None]]:
     return [[None if np.isnan(v) else float(v) for v in row] for row in rounded]
 
 
-def _scan_time() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+def _scan_time(minute: float = 0.0) -> str:
+    """Simulated wall-clock time for a given lifecycle minute."""
+    t = BASE_TIME + timedelta(minutes=minute)
+    return t.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _validate(scenario: str) -> dict:
@@ -206,15 +263,16 @@ def build_sweep(
     field: str,  # py-art field name
     elevation_deg: float = 0.5,
     *,
+    minute: float = 0.0,
     naz: int = 360,
     ngates: int = 320,
     gate_m: float = 250.0,
     range_stride: int = 1,
 ) -> dict:
-    """One synthetic polar sweep for a scenario/field (extract_sweep-shaped)."""
+    """One synthetic polar sweep for a scenario/field at lifecycle `minute`."""
     meta = _validate(scenario)
     az, rng, AZ, RNG = _polar_grid(naz, ngates, gate_m)
-    Z, V, CC = _FIELD_FUNCS[scenario](AZ, RNG, elevation_deg)
+    Z, V, CC = _FIELD_FUNCS[scenario](AZ, RNG, elevation_deg, minute)
     arr = {"reflectivity": Z, "velocity": V, "cross_correlation_ratio": CC}[field]
     if range_stride > 1:
         rng = rng[::range_stride]
@@ -223,7 +281,7 @@ def build_sweep(
         "field": field,
         "long_name": _LONG_NAMES[field],
         "units": _UNITS[field],
-        "scan_time": _scan_time(),
+        "scan_time": _scan_time(minute),
         "sweep": 0,
         "elevation_deg": elevation_deg,
         "radar_lat": meta["lat"],
@@ -241,15 +299,16 @@ def build_volume(
     scenario: str,
     field: str,
     *,
+    minute: float = 0.0,
     naz: int = 180,
     ngates: int = 160,
     gate_m: float = 500.0,
 ) -> dict:
-    """All elevation tilts for a scenario/field, for 3D stacking."""
+    """All elevation tilts for a scenario/field at lifecycle `minute` (3D)."""
     meta = _validate(scenario)
     sweeps = []
     for elev in _DEFAULT_ELEVS:
-        s = build_sweep(scenario, field, elev, naz=naz, ngates=ngates, gate_m=gate_m)
+        s = build_sweep(scenario, field, elev, minute=minute, naz=naz, ngates=ngates, gate_m=gate_m)
         sweeps.append(
             {
                 "elevation_deg": elev,
@@ -264,7 +323,7 @@ def build_volume(
         "field": field,
         "long_name": _LONG_NAMES[field],
         "units": _UNITS[field],
-        "scan_time": _scan_time(),
+        "scan_time": _scan_time(minute),
         "radar_lat": meta["lat"],
         "radar_lon": meta["lon"],
         "radar_alt_m": 380.0,
@@ -308,6 +367,17 @@ def alert_features(scenario: str) -> list[dict]:
             }
         )
     return feats
+
+
+def timeline_meta() -> dict:
+    """Playback timeline parameters shared with the frontend."""
+    return {
+        "window_min": WINDOW_MIN,
+        "step_min": STEP_MIN,
+        "n_frames": N_FRAMES,
+        "frames_min": list(range(0, WINDOW_MIN + 1, STEP_MIN)),
+        "base_time": _scan_time(0),
+    }
 
 
 def scenario_list() -> list[dict]:
