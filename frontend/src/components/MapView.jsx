@@ -25,6 +25,49 @@ const SEVERITY_COLOR = [
   /* default */ '#4cc9f0',
 ];
 
+const DEG2RAD = Math.PI / 180;
+const METERS_PER_DEG_LAT = 111320;
+
+function offsetLngLat([lon, lat], eastM, northM) {
+  return [
+    lon + eastM / (METERS_PER_DEG_LAT * Math.cos(lat * DEG2RAD)),
+    lat + northM / METERS_PER_DEG_LAT,
+  ];
+}
+
+/** A point on the radar circle at azimuth `deg` (CW from N), `radiusKm` out. */
+function rim(center, radiusKm, deg) {
+  const r = radiusKm * 1000;
+  return offsetLngLat(center, r * Math.sin(deg * DEG2RAD), r * Math.cos(deg * DEG2RAD));
+}
+
+/**
+ * Build the rotating-sweep geometry: a fading trail of wedges behind the
+ * leading beam, plus the bright leading line. Mimics a scanning radar dish.
+ */
+function sweepGeoJSON(center, radiusKm, leadDeg) {
+  const segments = 14;
+  const segWidth = 3.2; // degrees per trailing wedge
+  const features = [];
+  for (let k = 0; k < segments; k++) {
+    const a1 = leadDeg - k * segWidth;
+    const a0 = a1 - segWidth;
+    const ring = [center, rim(center, radiusKm, a0), rim(center, radiusKm, a1), center];
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [ring] },
+      properties: { op: 0.2 * (1 - k / segments) ** 1.5 },
+    });
+  }
+  const trail = { type: 'FeatureCollection', features };
+  const beam = {
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: [center, rim(center, radiusKm, leadDeg)] },
+    properties: {},
+  };
+  return { trail, beam };
+}
+
 /**
  * The 2D Mapbox map: base map + radar overlay (Z/V/CC) + NWS warning polygons
  * + TVS/TDS detection markers. Sweep data for the active demo scenario is
@@ -35,6 +78,7 @@ export default function MapView({ scenario, camera, field, alerts, analytics, op
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
+  const radarRef = useRef(null); // { center: [lon,lat], radiusKm } for the sweep
   const [ready, setReady] = useState(false);
   const [renderMsg, setRenderMsg] = useState('');
 
@@ -85,17 +129,19 @@ export default function MapView({ scenario, camera, field, alerts, analytics, op
             id: 'radar-layer',
             type: 'raster',
             source: 'radar-src',
-            paint: { 'raster-opacity': opacity, 'raster-resampling': 'nearest', 'raster-fade-duration': 0 },
+            paint: { 'raster-opacity': opacity, 'raster-resampling': 'linear', 'raster-fade-duration': 0 },
           });
           // Keep warning polygons above radar.
           if (map.getLayer('alerts-line')) map.moveLayer('radar-layer', 'alerts-fill');
         }
-        // Radar-site marker at the (simulated) station location.
+        // Radar-site marker + sweep center/radius.
         if (markerRef.current) markerRef.current.remove();
         markerRef.current = new mapboxgl.Marker({ color: '#4cc9f0' })
           .setLngLat([sweep.radar_lon, sweep.radar_lat])
           .setPopup(new mapboxgl.Popup().setText(`${sweep.station} · ${field}`))
           .addTo(map);
+        const lastRange = sweep.ranges_m[sweep.ranges_m.length - 1] || 150000;
+        radarRef.current = { center: [sweep.radar_lon, sweep.radar_lat], radiusKm: lastRange / 1000 };
         setRenderMsg('');
       })
       .catch((err) => {
@@ -112,6 +158,50 @@ export default function MapView({ scenario, camera, field, alerts, analytics, op
     const map = mapRef.current;
     if (map?.getLayer('radar-layer')) map.setPaintProperty('radar-layer', 'raster-opacity', opacity);
   }, [opacity]);
+
+  // --- rotating radar sweep (scanning-dish animation) -------------------- //
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    let raf;
+    let angle = 0;
+    let last = performance.now();
+
+    const ensureLayers = () => {
+      if (map.getSource('sweep-trail')) return;
+      const empty = { type: 'FeatureCollection', features: [] };
+      map.addSource('sweep-trail', { type: 'geojson', data: empty });
+      map.addLayer({
+        id: 'sweep-trail',
+        type: 'fill',
+        source: 'sweep-trail',
+        paint: { 'fill-color': '#4cc9f0', 'fill-opacity': ['get', 'op'] },
+      });
+      map.addSource('sweep-beam', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} } });
+      map.addLayer({
+        id: 'sweep-beam',
+        type: 'line',
+        source: 'sweep-beam',
+        paint: { 'line-color': '#aef6ff', 'line-width': 2, 'line-opacity': 0.85, 'line-blur': 2 },
+      });
+    };
+
+    const tick = (now) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      const r = radarRef.current;
+      if (r && map.isStyleLoaded()) {
+        ensureLayers();
+        angle = (angle + dt * 55) % 360; // ~6.5 s per revolution
+        const { trail, beam } = sweepGeoJSON(r.center, r.radiusKm, angle);
+        map.getSource('sweep-trail')?.setData(trail);
+        map.getSource('sweep-beam')?.setData(beam);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [ready]);
 
   // --- NWS warning polygons ---------------------------------------------- //
   useEffect(() => {

@@ -3,26 +3,78 @@ import { Canvas } from '@react-three/fiber';
 import { Grid, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { getDemoVolume } from '../lib/api';
-import { buildVolumeGeometry, detectionScenePosition } from '../lib/volume3d';
+import { beamHeight, buildVolumeGeometry, detectionScenePosition } from '../lib/volume3d';
 
-/** The stacked-sweep point cloud. */
+/** A soft radial sprite so points blend into a cohesive cloud (not dots). */
+function makeSoftSprite() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.45, 'rgba(255,255,255,0.55)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** The stacked-sweep cloud + an additive glow layer for intense cores. */
 function PointCloud({ volume, vertExag }) {
-  const { geometry, count } = useMemo(() => {
-    const { positions, colors } = buildVolumeGeometry(volume, { vertExag });
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    return { geometry: g, count: positions.length / 3 };
-  }, [volume, vertExag]);
+  const sprite = useMemo(makeSoftSprite, []);
+  const built = useMemo(
+    () => buildVolumeGeometry(volume, { vertExag, density: 3 }),
+    [volume, vertExag]
+  );
 
-  // Dispose old geometry when it changes.
-  useEffect(() => () => geometry.dispose(), [geometry]);
-  if (!count) return null;
+  const { cloud, glow } = useMemo(() => {
+    const c = new THREE.BufferGeometry();
+    c.setAttribute('position', new THREE.BufferAttribute(built.positions, 3));
+    c.setAttribute('color', new THREE.BufferAttribute(built.colors, 3));
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(built.glow.positions, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(built.glow.colors, 3));
+    return { cloud: c, glow: g };
+  }, [built]);
+
+  useEffect(() => () => {
+    cloud.dispose();
+    glow.dispose();
+  }, [cloud, glow]);
+
+  if (!built.count) return null;
 
   return (
-    <points geometry={geometry}>
-      <pointsMaterial vertexColors size={0.7} sizeAttenuation transparent opacity={0.85} />
-    </points>
+    <>
+      <points geometry={cloud}>
+        <pointsMaterial
+          map={sprite}
+          vertexColors
+          size={1.5}
+          sizeAttenuation
+          transparent
+          opacity={0.6}
+          depthWrite={false}
+          alphaTest={0.02}
+        />
+      </points>
+      {built.glow.positions.length > 0 && (
+        <points geometry={glow}>
+          <pointsMaterial
+            map={sprite}
+            vertexColors
+            size={4.5}
+            sizeAttenuation
+            transparent
+            opacity={0.5}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </points>
+      )}
+    </>
   );
 }
 
@@ -79,7 +131,13 @@ export default function Volume3D({ scenario, field, analytics, vertExag = 4 }) {
   }, [scenario, field]);
 
   const signatures = analytics?.tornado_signatures || [];
-  const topKm = useMemo(() => (volume ? buildVolumeGeometry(volume, { vertExag }).topKm : 0), [volume, vertExag]);
+  // Cheap top-of-storm estimate (no dense cloud build): tallest tilt × range.
+  const topKm = useMemo(() => {
+    if (!volume) return 0;
+    const maxR = volume.sweeps[0]?.ranges_m?.slice(-1)[0] || 150000;
+    const maxEl = volume.elevations_deg[volume.elevations_deg.length - 1] || 4;
+    return (beamHeight(maxR, maxEl) / 1000) * vertExag;
+  }, [volume, vertExag]);
 
   // Orbit target: the strongest circulation, else the radar.
   const target = useMemo(() => {

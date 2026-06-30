@@ -29,27 +29,46 @@ export function groundRange(rangeM, elevDeg) {
   return R_EFF * Math.asin((rangeM * Math.cos(el)) / (R_EFF + h));
 }
 
-// Per-field "is this gate worth drawing" tests (keeps the cloud meaningful).
+// Per-field "is this gate worth drawing" tests. Reflectivity reaches down to
+// light returns so the storm reads as a thick, cohesive cloud (not just cores).
 const SIGNIFICANCE = {
-  reflectivity: (v) => v >= 20, // precipitation and cores
-  velocity: (v) => Math.abs(v) >= 6, // meaningful motion / couplet
-  cross_correlation_ratio: (v) => v < 0.95, // depressed CC (debris / mixed)
+  reflectivity: (v) => v >= 12, // cloud body + cores
+  velocity: (v) => Math.abs(v) >= 5, // meaningful motion / couplet
+  cross_correlation_ratio: (v) => v < 0.97, // depressed CC (debris / mixed)
 };
+
+// Reflectivity gates at/above this glow (60+ dBZ cores) get an additive halo.
+const GLOW_DBZ = 58;
 
 function significanceFor(field) {
   return SIGNIFICANCE[field] || (() => true);
 }
 
 /**
- * @returns {{positions: Float32Array, colors: Float32Array, count: number,
- *            topKm: number}}  Buffers for a THREE.Points geometry.
+ * Build a dense, jittered point cloud plus a separate "glow" set for the
+ * highest-reflectivity cores.
+ *
+ * @param {object} volume
+ * @param {object} opts
+ * @param {number} opts.vertExag  Vertical exaggeration.
+ * @param {number} opts.density   Points emitted per gate (>1 = jittered fill).
+ * @param {number} opts.jitterKm  Horizontal jitter radius for extra points.
+ * @returns {{positions, colors, glow:{positions,colors}, count, topKm}}
  */
-export function buildVolumeGeometry(volume, { vertExag = 4 } = {}) {
+export function buildVolumeGeometry(volume, { vertExag = 4, density = 3, jitterKm = 0.45 } = {}) {
   const colorOf = colormapFor(volume.field);
   const significant = significanceFor(volume.field);
+  const isReflectivity = volume.field === 'reflectivity';
   const positions = [];
   const colors = [];
+  const glowPos = [];
+  const glowCol = [];
   let topKm = 0;
+
+  const emit = (x, y, z, r, g, b) => {
+    positions.push(x, y, z);
+    colors.push(r, g, b);
+  };
 
   for (const sweep of volume.sweeps) {
     const el = sweep.elevation_deg;
@@ -70,9 +89,29 @@ export function buildVolumeGeometry(volume, { vertExag = 4 } = {}) {
         const eastKm = (gr * sinA) / 1000;
         const northKm = (gr * cosA) / 1000;
         const upKm = (h / 1000) * vertExag;
-        positions.push(eastKm, upKm, northKm); // three.js: Y up
-        colors.push(r / 255, g / 255, b / 255);
         if (upKm > topKm) topKm = upKm;
+
+        const cr = r / 255;
+        const cg = g / 255;
+        const cb = b / 255;
+        emit(eastKm, upKm, northKm, cr, cg, cb);
+        // Densify: scatter extra points around the gate so it reads as cloud.
+        for (let d = 1; d < density; d++) {
+          emit(
+            eastKm + (Math.random() - 0.5) * 2 * jitterKm,
+            upKm + (Math.random() - 0.5) * jitterKm * vertExag * 0.5,
+            northKm + (Math.random() - 0.5) * 2 * jitterKm,
+            cr,
+            cg,
+            cb
+          );
+        }
+
+        // Glow halo for intense reflectivity cores (brightened toward white).
+        if (isReflectivity && v >= GLOW_DBZ) {
+          glowPos.push(eastKm, upKm, northKm);
+          glowCol.push(cr + (1 - cr) * 0.5, cg + (1 - cg) * 0.5, cb + (1 - cb) * 0.5);
+        }
       }
     }
   }
@@ -80,6 +119,7 @@ export function buildVolumeGeometry(volume, { vertExag = 4 } = {}) {
   return {
     positions: new Float32Array(positions),
     colors: new Float32Array(colors),
+    glow: { positions: new Float32Array(glowPos), colors: new Float32Array(glowCol) },
     count: positions.length / 3,
     topKm,
   };

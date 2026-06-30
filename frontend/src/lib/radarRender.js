@@ -12,6 +12,10 @@
  * we treat range as ground distance. The flat metric-plane → corner-quad
  * approach is the standard radar-overlay approximation and is accurate to well
  * under a pixel across a few hundred kilometres.
+ *
+ * Rendering is done in two passes: gates are painted sharp onto an offscreen
+ * canvas, then composited through a blur so the hard polygon edges feather into
+ * smooth, flowing "weather-broadcast" contours.
  */
 import { colormapFor } from './colormaps';
 
@@ -30,33 +34,37 @@ function offsetLatLon(lat, lon, eastM, northM) {
  *
  * @param {object} sweep  Result of the backend /sweep endpoint.
  * @param {object} opts
- * @param {number} opts.size       Canvas edge length in pixels (default 1400).
+ * @param {number} opts.size    Canvas edge length in pixels (default 1600).
+ * @param {number} opts.smooth  Gaussian blur radius in px for contour
+ *                              smoothing (default scales with size; 0 = off).
  * @returns {{canvas: HTMLCanvasElement, coordinates: number[][]}}
  *          `coordinates` is [topLeft, topRight, bottomRight, bottomLeft] as
  *          [lon, lat], ready for a Mapbox image source.
  */
-export function renderSweepToCanvas(sweep, { size = 1400 } = {}) {
+export function renderSweepToCanvas(sweep, { size = 1600, smooth } = {}) {
   const { azimuths, ranges_m: ranges, data, radar_lat: lat, radar_lon: lon } = sweep;
   const colorOf = colormapFor(sweep.field);
+  const blur = smooth == null ? Math.max(1.5, size / 650) : smooth;
 
-  // Gate spacing → the painted radius extends half a gate past the last gate.
   const gateSpacing = ranges.length > 1 ? ranges[1] - ranges[0] : 250;
   const maxR = ranges[ranges.length - 1] + gateSpacing / 2; // metres
   const azStep = azimuths.length > 1 ? 360 / azimuths.length : 1; // deg per ray
 
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, size, size);
+  // --- pass 1: paint gates sharp on an offscreen canvas ------------------ //
+  const sharp = document.createElement('canvas');
+  sharp.width = size;
+  sharp.height = size;
+  const sctx = sharp.getContext('2d');
 
-  // Metres → pixels. Canvas spans [-maxR, +maxR] in both axes; north is up.
-  const scale = size / (2 * maxR);
+  const scale = size / (2 * maxR); // metres → pixels; canvas spans ±maxR, N up
   const toPx = (eastM, northM) => [(eastM + maxR) * scale, (maxR - northM) * scale];
 
+  // A hair of angular overlap removes seams the blur would otherwise spread.
+  const pad = azStep * 0.08 * DEG2RAD;
+
   for (let i = 0; i < azimuths.length; i++) {
-    const a0 = azimuths[i] * DEG2RAD;
-    const a1 = (azimuths[i] + azStep) * DEG2RAD;
+    const a0 = azimuths[i] * DEG2RAD - pad;
+    const a1 = (azimuths[i] + azStep) * DEG2RAD + pad;
     const sin0 = Math.sin(a0);
     const cos0 = Math.cos(a0);
     const sin1 = Math.sin(a1);
@@ -73,23 +81,30 @@ export function renderSweepToCanvas(sweep, { size = 1400 } = {}) {
       const rNear = j === 0 ? Math.max(0, ranges[0] - gateSpacing / 2) : (ranges[j - 1] + ranges[j]) / 2;
       const rFar = j === ranges.length - 1 ? ranges[j] + gateSpacing / 2 : (ranges[j] + ranges[j + 1]) / 2;
 
-      // Quad corners: (near,a0) (far,a0) (far,a1) (near,a1). East = r*sin(az),
-      // North = r*cos(az), with az measured clockwise from north.
       const p1 = toPx(rNear * sin0, rNear * cos0);
       const p2 = toPx(rFar * sin0, rFar * cos0);
       const p3 = toPx(rFar * sin1, rFar * cos1);
       const p4 = toPx(rNear * sin1, rNear * cos1);
 
-      ctx.fillStyle = `rgba(${r},${g},${b},${alpha / 255})`;
-      ctx.beginPath();
-      ctx.moveTo(p1[0], p1[1]);
-      ctx.lineTo(p2[0], p2[1]);
-      ctx.lineTo(p3[0], p3[1]);
-      ctx.lineTo(p4[0], p4[1]);
-      ctx.closePath();
-      ctx.fill();
+      sctx.fillStyle = `rgba(${r},${g},${b},${alpha / 255})`;
+      sctx.beginPath();
+      sctx.moveTo(p1[0], p1[1]);
+      sctx.lineTo(p2[0], p2[1]);
+      sctx.lineTo(p3[0], p3[1]);
+      sctx.lineTo(p4[0], p4[1]);
+      sctx.closePath();
+      sctx.fill();
     }
   }
+
+  // --- pass 2: composite through a blur for smooth contours -------------- //
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (blur > 0) ctx.filter = `blur(${blur}px)`;
+  ctx.drawImage(sharp, 0, 0);
+  ctx.filter = 'none';
 
   const coordinates = [
     offsetLatLon(lat, lon, -maxR, maxR), // top-left  (NW)
