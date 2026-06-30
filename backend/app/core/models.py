@@ -1,5 +1,7 @@
 """Pydantic response models for the radar API."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -69,3 +71,63 @@ class SweepData(BaseModel):
     ranges_m: list[float] = Field(..., description="Gate-center slant ranges, meters")
     range_stride: int
     data: list[list[float | None]]
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3 — Analytics engine                                                   #
+# --------------------------------------------------------------------------- #
+
+Severity = Literal["low", "moderate", "high", "extreme"]
+HazardType = Literal["tornado", "hail", "snow", "damaging_wind"]
+
+
+class VortexSignature(BaseModel):
+    """A detected velocity couplet (mesocyclone / TVS), with TDS cross-check."""
+
+    # Location (radar-relative + georeferenced)
+    azimuth_deg: float
+    range_km: float
+    lat: float
+    lon: float
+    elevation_deg: float
+
+    # Velocity-derived attributes
+    delta_v_ms: float = Field(..., description="Gate-to-gate velocity difference (Vmax - Vmin)")
+    rotational_velocity_ms: float = Field(..., description="Vrot = delta_v / 2")
+    rotational_velocity_kt: float
+    diameter_m: float = Field(..., description="Azimuthal width of the circulation")
+    estimated_peak_wind_mph: float
+    ef_estimate: str
+    possible_aliasing: bool = False
+
+    # Tornadic Debris Signature cross-reference
+    is_tds: bool = False
+    cc_value: float | None = Field(None, description="Correlation coefficient at the couplet")
+    z_value: float | None = Field(None, description="Reflectivity (dBZ) at the couplet")
+
+    severity: Severity
+
+
+class HazardFlag(BaseModel):
+    """A non-tornadic severe-weather flag (hail / snow / damaging wind)."""
+
+    type: HazardType
+    severity: Severity
+    detail: str
+    evidence: dict[str, float]
+    lat: float | None = None
+    lon: float | None = None
+
+
+class AnalysisResult(BaseModel):
+    """Full storm-analytics output for the latest volume scan of a station."""
+
+    station: str
+    scan_time: str
+    radar_lat: float
+    radar_lon: float
+    velocity_elevation_deg: float
+    reflectivity_elevation_deg: float
+    tornado_signatures: list[VortexSignature]
+    hazards: list[HazardFlag]
+    summary: str

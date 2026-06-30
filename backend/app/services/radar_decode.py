@@ -63,6 +63,27 @@ def read_radar(path: str) -> "pyart.core.Radar":
     return pyart.io.read_nexrad_archive(path)
 
 
+def ensure_dealiased_velocity(radar) -> str:
+    """Add a region-based dealiased velocity field and return its field name.
+
+    NEXRAD base velocity is aliased at the Nyquist co-interval (±~26 m/s); raw
+    gate-to-gate folds masquerade as velocity couplets. Region-based dealiasing
+    unfolds them so TVS detection sees true shear. On failure (or if already
+    present) the function degrades gracefully to the raw ``velocity`` field.
+    """
+    if "velocity" not in radar.fields:
+        return "velocity"
+    if "corrected_velocity" in radar.fields:
+        return "corrected_velocity"
+    try:
+        corrected = pyart.correct.dealias_region_based(radar, vel_field="velocity")
+        radar.add_field("corrected_velocity", corrected, replace_existing=True)
+        return "corrected_velocity"
+    except Exception as exc:  # noqa: BLE001 - dealiasing is best-effort
+        logger.warning("velocity dealiasing failed (%s); using raw velocity", exc)
+        return "velocity"
+
+
 def _sweep_has_field(radar, field: str, sweep: int) -> bool:
     """True if the field exists and has at least one unmasked gate in the sweep."""
     if field not in radar.fields:
