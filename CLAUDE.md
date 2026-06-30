@@ -119,7 +119,8 @@ Each demo scenario is a *living* simulation over a 2-hour window (5-min steps,
 - **Inspect crosshair** (`MapView` tool menu + `lib/sample.js`): O(1) polar
   lookup of Z & V under the cursor → floating HUD (dBZ / MPH). No canvas reads.
 - **Station Source switch** (Sidebar): Demo ⇄ Live NOAA. In **Live** mode a
-  station dropdown (`lib/stations.py` → KTBW/KTLX/KOKX/KHGX) drives the live
+  region-grouped picker (`lib/stations.js`, the full ~155-site WSR-88D network
+  incl. AK/HI/Guam/PR) with a type-ahead ICAO/city filter drives the live
   endpoints; `App` polls `getSweep`/`getVolume`/`getAnalytics` every ~2.5 min
   (and on manual refresh), a retro spinner shows while a scan downloads, and
   the timeline is replaced by a LIVE status bar. NWS alerts come from the real

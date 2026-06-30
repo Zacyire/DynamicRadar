@@ -1,4 +1,6 @@
 /** Control panel: source switch, scenario info, products, met-log, analytics. */
+import { useMemo, useState } from 'react';
+import { LIVE_STATIONS, filterRegions, findStation } from '../lib/stations';
 
 const FIELDS = [
   { key: 'Z', label: 'Reflectivity (Z)' },
@@ -31,7 +33,6 @@ export default function Sidebar({
   onSourceMode,
   liveStation,
   onLiveStation,
-  liveStations = [],
   field,
   onField,
   opacity,
@@ -46,6 +47,26 @@ export default function Sidebar({
   const maxZ = analytics?.max_reflectivity_dbz;
   const peakKt = analytics?.peak_rotational_velocity_kt || 0;
   const hail = estimateHail(maxZ);
+
+  // Live station picker: text filter over the region-grouped network.
+  const [stationFilter, setStationFilter] = useState('');
+  const regions = useMemo(() => {
+    const filtered = filterRegions(stationFilter);
+    // Keep the selected station selectable even when filtered out.
+    const present = filtered.some((r) => r.stations.some((s) => s.icao === liveStation));
+    if (!present) {
+      const sel = findStation(liveStation);
+      if (sel) return [{ region: 'Selected', stations: [sel] }, ...filtered];
+    }
+    return filtered;
+  }, [stationFilter, liveStation]);
+
+  const onFilterKey = (e) => {
+    if (e.key === 'Enter') {
+      const first = regions.flatMap((r) => r.stations)[0];
+      if (first) onLiveStation(first.icao);
+    }
+  };
 
   return (
     <aside className="sidebar">
@@ -69,17 +90,34 @@ export default function Sidebar({
           <>
             <label className="station-select">
               <span className="muted small">NEXRAD Station</span>
-              <select value={liveStation} onChange={(e) => onLiveStation(e.target.value)}>
-                {liveStations.map((s) => (
-                  <option key={s.icao} value={s.icao}>
-                    {s.icao} — {s.name}
-                  </option>
+              <input
+                type="text"
+                className="station-filter"
+                placeholder="Filter by ID or city (e.g. KTLX)…"
+                value={stationFilter}
+                onChange={(e) => setStationFilter(e.target.value)}
+                onKeyDown={onFilterKey}
+              />
+              <select
+                size={8}
+                value={liveStation}
+                onChange={(e) => onLiveStation(e.target.value)}
+              >
+                {regions.map((r) => (
+                  <optgroup key={r.region} label={r.region}>
+                    {r.stations.map((s) => (
+                      <option key={s.icao} value={s.icao}>
+                        {s.icao} — {s.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </label>
             <div className="muted small">
-              Streaming the latest real volume scan from NOAA S3 (auto-refreshes
-              every ~2.5 min). Requires a backend with open egress.
+              {LIVE_STATIONS.length} stations · streaming the latest real volume scan
+              from NOAA S3 (auto-refreshes every ~2.5 min). Requires a backend with
+              open egress.
             </div>
           </>
         )}

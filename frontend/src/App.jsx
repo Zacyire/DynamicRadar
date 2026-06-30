@@ -11,7 +11,7 @@ import {
   getDemoAnalytics,
   getScenarios,
 } from './lib/api';
-import { LIVE_STATIONS, findStation } from './lib/stations';
+import { findStation } from './lib/stations';
 
 // Live polling cadence — NEXRAD sites finish a volume scan every few minutes.
 const LIVE_POLL_MS = 150000;
@@ -207,7 +207,6 @@ export default function App() {
           onSourceMode={setSourceMode}
           liveStation={liveStation}
           onLiveStation={setLiveStation}
-          liveStations={LIVE_STATIONS}
           field={field}
           onField={setField}
           opacity={opacity}
