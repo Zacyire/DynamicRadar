@@ -6,14 +6,57 @@
  */
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
-async function request(path) {
-  const res = await fetch(`${API_BASE}${path}`);
+async function request(path, params) {
+  const qs = params
+    ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v != null))
+    : '';
+  const res = await fetch(`${API_BASE}${path}${qs}`);
   if (!res.ok) {
-    throw new Error(`API ${path} failed: ${res.status}`);
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(`API ${path} failed: ${detail}`);
   }
   return res.json();
 }
 
 export function getHealth() {
   return request('/api/health');
+}
+
+/** Nearest WSR-88D station to a coordinate (geolocation auto-connect). */
+export function getNearestStation(lat, lon) {
+  return request('/api/radar/nearest', { lat, lon });
+}
+
+export function getStations() {
+  return request('/api/radar/stations');
+}
+
+/** Latest volume-scan metadata for a station. */
+export function getLatestVolume(station) {
+  return request(`/api/radar/${station}/latest`);
+}
+
+/** Decoded polar sweep for one moment (field: Z | V | CC). */
+export function getSweep(station, { field = 'Z', sweep = null, maxRangeKm = 300, rangeStride = 2 } = {}) {
+  return request(`/api/radar/${station}/sweep`, {
+    field,
+    sweep,
+    max_range_km: maxRangeKm,
+    range_stride: rangeStride,
+  });
+}
+
+/** Storm analytics (TVS/TDS + hazards) for the latest scan. */
+export function getAnalytics(station) {
+  return request(`/api/analytics/${station}`);
+}
+
+/** Live NWS warning polygons (GeoJSON FeatureCollection). */
+export function getAlerts(lat, lon, { radiusKm = 600, demo = false } = {}) {
+  return request('/api/alerts/active', { lat, lon, radius_km: radiusKm, demo: demo || null });
 }
