@@ -1,0 +1,28 @@
+# ---- Python / Backend ----
+backend/venv/
+backend/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+backend/.env
+backend/app/data/cache/
+
+# ---- Node / Frontend ----
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.env
+frontend/.env.local
+
+# ---- Editor / OS ----
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# ---- Radar data artifacts ----
+*.ar2v
+*.nc
+*.netcdf

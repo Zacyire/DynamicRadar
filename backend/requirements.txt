@@ -1,0 +1,22 @@
+# ---- Web framework ----
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# ---- NEXRAD Level II fetch + decode ----
+arm-pyart==1.19.2          # Py-ART: radar I/O, gridding, field access
+boto3==1.35.92             # AWS S3 access to noaa-nexrad-level2 bucket
+botocore==1.35.92
+
+# ---- Numerics / analytics engine ----
+numpy==1.26.4
+scipy==1.14.1
+xarray==2024.11.0
+
+# ---- HTTP client (NWS alerts API, station metadata) ----
+httpx==0.28.1
+
+# ---- Dev / testing ----
+pytest==8.3.4
