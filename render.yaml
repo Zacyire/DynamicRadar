@@ -1,0 +1,29 @@
+# Render Blueprint for the DynamicRadar FastAPI backend.
+# Deploy: push to GitHub, then in Render → "New +" → "Blueprint" → pick this repo.
+# Render reads $PORT and injects it; the start command binds to it.
+services:
+  - type: web
+    name: dynamicradar-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # NOAA bucket is reachable from Render's network (no egress block).
+      - key: NEXRAD_BUCKET
+        value: noaa-nexrad-level2
+      # Comma-separated allowed origins. Set to your deployed frontend URL.
+      # Use "*" for a quick first test (credentials are auto-disabled then).
+      - key: CORS_ORIGINS
+        value: "*"
+      # NWS requires a descriptive User-Agent with a contact.
+      - key: NWS_USER_AGENT
+        value: DynamicRadar (you@example.com)
+      # Keep the downloaded-scan cache on the ephemeral writable disk.
+      - key: CACHE_DIR
+        value: /tmp/nexrad-cache

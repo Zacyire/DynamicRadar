@@ -23,10 +23,16 @@ app = FastAPI(
     version=__version__,
 )
 
+# CORS: in production set CORS_ORIGINS to the deployed frontend origin(s).
+# A bare "*" allows any origin (handy for first-deploy testing) but, per the
+# CORS spec, cannot be combined with credentialed requests — so we disable
+# credentials in that case.
+_origins = settings.cors_origin_list
+_allow_all = "*" in _origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
+    allow_origins=["*"] if _allow_all else _origins,
+    allow_credentials=not _allow_all,
     allow_methods=["*"],
     allow_headers=["*"],
 )
