@@ -6,6 +6,7 @@ threadpool — Py-ART parsing and S3 I/O are blocking.
 
 from __future__ import annotations
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, HTTPException, Query
 
 from app.core import stations as station_catalog
@@ -58,6 +59,17 @@ def _load_latest(station: str):
         key, path = nexrad_fetch.fetch_latest(station)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (BotoCoreError, ClientError) as exc:
+        # S3 access denied / network blocked / endpoint unreachable. Surface a
+        # clean 502 (not a 500) and point the client at the demo scenarios.
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Live NEXRAD fetch failed for {station.upper()} "
+                f"({type(exc).__name__}). The data provider may be blocked on "
+                f"this network — try the demo scenarios at /api/demo/scenarios."
+            ),
+        ) from exc
     radar = radar_decode.read_radar(str(path))
     return key, radar
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Grid, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { getVolume } from '../lib/api';
+import { getDemoVolume } from '../lib/api';
 import { buildVolumeGeometry, detectionScenePosition } from '../lib/volume3d';
 
 /** The stacked-sweep point cloud. */
@@ -57,16 +57,16 @@ function RadarMarker() {
   );
 }
 
-export default function Volume3D({ station, field, analytics, vertExag = 4 }) {
+export default function Volume3D({ scenario, field, analytics, vertExag = 4 }) {
   const [volume, setVolume] = useState(null);
   const [status, setStatus] = useState('');
 
   useEffect(() => {
-    if (!station) return;
+    if (!scenario) return;
     let cancelled = false;
     setStatus('Loading volume…');
     setVolume(null);
-    getVolume(station.icao, { field })
+    getDemoVolume(scenario, { field })
       .then((v) => {
         if (cancelled) return;
         setVolume(v);
@@ -76,7 +76,7 @@ export default function Volume3D({ station, field, analytics, vertExag = 4 }) {
     return () => {
       cancelled = true;
     };
-  }, [station, field]);
+  }, [scenario, field]);
 
   const signatures = analytics?.tornado_signatures || [];
   const topKm = useMemo(() => (volume ? buildVolumeGeometry(volume, { vertExag }).topKm : 0), [volume, vertExag]);

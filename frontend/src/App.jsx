@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import MapView from './components/MapView';
 import Volume3D from './components/Volume3D';
 import Sidebar from './components/Sidebar';
-import { useGeolocation } from './hooks/useGeolocation';
-import { getAlerts, getAnalytics, getNearestStation } from './lib/api';
+import SearchBar from './components/SearchBar';
+import { getDemoAlerts, getDemoAnalytics, getScenarios } from './lib/api';
 
 /** Is there a circulation worth a 3D look? (TDS, or a couplet >= moderate.) */
 function hasSignificantCirculation(analytics) {
@@ -13,62 +13,65 @@ function hasSignificantCirculation(analytics) {
 }
 
 /**
- * DynamicRadar 2D interface (Phase 4).
+ * DynamicRadar app shell (Phase 6 — search + demo scenarios).
  *
- * Flow: geolocate → resolve nearest WSR-88D → load the latest sweep + storm
- * analytics + NWS warnings, and render them on the Mapbox map.
+ * The app is driven by a selected demo *scenario* (tornado / hurricane /
+ * squall / clear). The map search bar pans the camera to a city/region and
+ * swaps in the matching scenario; all radar, analytics and alert data come
+ * from the offline demo endpoints.
  */
 export default function App() {
-  const { coords, status: geoStatus } = useGeolocation();
-  const [station, setStation] = useState(null);
+  const [scenarios, setScenarios] = useState([]);
+  const [scenario, setScenario] = useState('tornado');
+  const [camera, setCamera] = useState(null);
   const [field, setField] = useState('Z');
   const [opacity, setOpacity] = useState(0.8);
+  const [vertExag, setVertExag] = useState(4);
+  const [viewMode, setViewMode] = useState('2d');
   const [analytics, setAnalytics] = useState(null);
   const [alerts, setAlerts] = useState(null);
-  const [alertsError, setAlertsError] = useState('');
-  const [demoAlerts, setDemoAlerts] = useState(false);
   const [sweepMeta, setSweepMeta] = useState(null);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [viewMode, setViewMode] = useState('2d'); // '2d' | '3d'
-  const [vertExag, setVertExag] = useState(4);
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
-  // Geolocation → nearest station.
+  // Load the scenario catalogue once; seed the camera from the default.
   useEffect(() => {
-    if (!coords) return;
-    getNearestStation(coords.lat, coords.lon)
-      .then(setStation)
-      .catch((e) => console.error('nearest station failed', e));
-  }, [coords]);
+    getScenarios()
+      .then((d) => {
+        setScenarios(d.scenarios);
+        const def = d.scenarios.find((s) => s.id === 'tornado') || d.scenarios[0];
+        if (def) {
+          setScenario(def.id);
+          setCamera({ center: [def.lon, def.lat], zoom: def.zoom });
+        }
+      })
+      .catch((e) => console.error('scenarios failed', e.message));
+  }, []);
 
-  // Station → analytics (non-fatal).
+  // Scenario → analytics + alerts.
   useEffect(() => {
-    if (!station) return;
+    if (!scenario) return;
     setAnalytics(null);
-    getAnalytics(station.icao)
-      .then(setAnalytics)
-      .catch((e) => console.warn('analytics failed', e.message));
-  }, [station, refreshKey]);
+    getDemoAnalytics(scenario).then(setAnalytics).catch((e) => console.warn('analytics', e.message));
+    getDemoAlerts(scenario)
+      .then(setAlerts)
+      .catch(() => setAlerts({ type: 'FeatureCollection', features: [] }));
+  }, [scenario]);
 
-  // Coords/station → NWS warnings (non-fatal; supports demo mode).
-  useEffect(() => {
-    if (!coords) return;
-    setAlertsError('');
-    getAlerts(coords.lat, coords.lon, { demo: demoAlerts })
-      .then((fc) => setAlerts(fc))
-      .catch((e) => {
-        setAlerts({ type: 'FeatureCollection', features: [] });
-        setAlertsError(e.message);
-      });
-  }, [coords, demoAlerts, refreshKey]);
-
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
-
-  // Reset the circulation prompt whenever a fresh analysis arrives.
   useEffect(() => setBannerDismissed(false), [analytics]);
+
+  const activeMeta = useMemo(
+    () => scenarios.find((s) => s.id === scenario) || null,
+    [scenarios, scenario]
+  );
 
   const circulationDetected = useMemo(() => hasSignificantCirculation(analytics), [analytics]);
   const showBanner = circulationDetected && viewMode === '2d' && !bannerDismissed;
+
+  // Search bar → pan camera + swap scenario.
+  const handleSearchSelect = (place) => {
+    setCamera({ center: [place.lon, place.lat], zoom: place.zoom });
+    if (place.scenario !== scenario) setScenario(place.scenario);
+  };
 
   return (
     <div className="app-shell">
@@ -79,31 +82,25 @@ export default function App() {
             <button className={viewMode === '2d' ? 'active' : ''} onClick={() => setViewMode('2d')}>2D Map</button>
             <button className={viewMode === '3d' ? 'active' : ''} onClick={() => setViewMode('3d')}>3D Volume</button>
           </div>
-          <span className="app-status">
-            {station ? `${station.icao} · ${field}` : 'initializing…'}
-          </span>
+          <span className="app-status">{activeMeta ? `${activeMeta.station} · ${field}` : 'loading…'}</span>
         </div>
       </header>
       <div className="app-body">
         <Sidebar
-          station={station}
-          geoStatus={geoStatus}
+          meta={activeMeta}
           field={field}
           onField={setField}
           opacity={opacity}
           onOpacity={setOpacity}
-          demoAlerts={demoAlerts}
-          onDemoAlerts={setDemoAlerts}
-          alertsCount={alerts?.features?.length || 0}
-          alertsError={alertsError}
           analytics={analytics}
+          alertsCount={alerts?.features?.length || 0}
           sweepMeta={sweepMeta}
-          onRefresh={refresh}
           viewMode={viewMode}
           vertExag={vertExag}
           onVertExag={setVertExag}
         />
         <div className="view-area">
+          <SearchBar onSelect={handleSearchSelect} activeScenario={scenario} />
           {showBanner && (
             <div className="circ-banner">
               <span>⚠ Circulation detected — inspect the vertical structure in 3D.</span>
@@ -115,8 +112,8 @@ export default function App() {
           )}
           {viewMode === '2d' ? (
             <MapView
-              key={refreshKey}
-              station={station}
+              scenario={scenario}
+              camera={camera}
               field={field}
               alerts={alerts}
               analytics={analytics}
@@ -124,7 +121,7 @@ export default function App() {
               onSweepMeta={setSweepMeta}
             />
           ) : (
-            <Volume3D station={station} field={field} analytics={analytics} vertExag={vertExag} />
+            <Volume3D scenario={scenario} field={field} analytics={analytics} vertExag={vertExag} />
           )}
         </div>
       </div>

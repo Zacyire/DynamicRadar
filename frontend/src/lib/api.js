@@ -70,3 +70,25 @@ export function getVolume(station, { field = 'Z', maxRangeKm = 150, rangeStride 
 export function getAlerts(lat, lon, { radiusKm = 600, demo = false } = {}) {
   return request('/api/alerts/active', { lat, lon, radius_km: radiusKm, demo: demo || null });
 }
+
+// --- Demo scenarios (offline, synthetic datasets) ------------------------- //
+
+export function getScenarios() {
+  return request('/api/demo/scenarios');
+}
+
+export function getDemoSweep(scenario, { field = 'Z', rangeStride = 1 } = {}) {
+  return request(`/api/demo/${scenario}/sweep`, { field, range_stride: rangeStride });
+}
+
+export function getDemoVolume(scenario, { field = 'Z' } = {}) {
+  return request(`/api/demo/${scenario}/volume`, { field });
+}
+
+export function getDemoAnalytics(scenario) {
+  return request(`/api/demo/${scenario}/analytics`);
+}
+
+export function getDemoAlerts(scenario) {
+  return request(`/api/demo/${scenario}/alerts`);
+}

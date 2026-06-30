@@ -9,19 +9,14 @@ const FIELDS = [
 const SEV_COLOR = { extreme: '#ff00ff', high: '#ff2d2d', moderate: '#ffb000', low: '#4cc9f0' };
 
 export default function Sidebar({
-  station,
-  geoStatus,
+  meta,
   field,
   onField,
   opacity,
   onOpacity,
-  demoAlerts,
-  onDemoAlerts,
   alertsCount,
-  alertsError,
   analytics,
   sweepMeta,
-  onRefresh,
   viewMode,
   vertExag,
   onVertExag,
@@ -29,23 +24,23 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <section className="card">
-        <h2>Radar</h2>
-        {station ? (
+        <h2>Scenario</h2>
+        {meta ? (
           <>
-            <div className="kv"><span>Station</span><strong>{station.icao}</strong></div>
-            <div className="kv"><span>Site</span><span>{station.name}</span></div>
-            {station.distance_km != null && (
-              <div className="kv"><span>Distance</span><span>{station.distance_km} km</span></div>
-            )}
+            <div className="kv"><span>Dataset</span><strong>{meta.station}</strong></div>
+            <div className="kv"><span>Region</span><span>{meta.region}</span></div>
+            <div className="scenario-desc">{meta.label}</div>
+            <div className="muted small">{meta.description}</div>
             {sweepMeta && (
-              <div className="kv"><span>Scan</span><span>{new Date(sweepMeta.scan_time).toUTCString().slice(17, 25)}Z</span></div>
+              <div className="kv" style={{ marginTop: '0.4rem' }}>
+                <span>Scan</span><span>{new Date(sweepMeta.scan_time).toUTCString().slice(17, 25)}Z</span>
+              </div>
             )}
-            <div className="muted small">geolocation: {geoStatus}</div>
+            <div className="muted small">Search a city above to switch scenarios.</div>
           </>
         ) : (
-          <div className="muted">Locating nearest WSR-88D…</div>
+          <div className="muted">Loading scenarios…</div>
         )}
-        <button className="btn" onClick={onRefresh} disabled={!station}>Refresh</button>
       </section>
 
       <section className="card">
@@ -84,11 +79,7 @@ export default function Sidebar({
 
       <section className="card">
         <h2>NWS Warnings {alertsCount > 0 && <span className="badge">{alertsCount}</span>}</h2>
-        <label className="checkbox">
-          <input type="checkbox" checked={demoAlerts} onChange={(e) => onDemoAlerts(e.target.checked)} />
-          Demo polygons (offline)
-        </label>
-        {alertsError && <div className="muted small">live NWS unavailable: {alertsError}</div>}
+        <div className="muted small">Scenario warning polygons (simulated).</div>
         <ul className="legend">
           <li><span className="swatch" style={{ background: '#ff2d2d' }} /> Tornado</li>
           <li><span className="swatch" style={{ background: '#ffb000' }} /> Severe T-storm</li>

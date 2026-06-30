@@ -20,18 +20,19 @@ data, decodes the primary moments, runs a storm-analytics engine
 backend/app/
   main.py            FastAPI app + router wiring
   config.py          pydantic-settings (.env)
-  routers/           health, radar, analytics, alerts
+  routers/           health, radar, analytics, alerts, demo
   services/
     nexrad_fetch.py  boto3 anonymous S3 fetch (latest volume scan)
     radar_decode.py  Py-ART decode: sweeps, Z/V/CC, dealiasing, volume tilts
     analytics.py     TVS/TDS detection, attributes, hazard classification (numpy-only)
+    demo_scenarios.py synthetic offline datasets (tornado/hurricane/squall/clear)
   core/              geo helpers, models (pydantic), station catalog
   tests/             17 offline tests (no network)
 frontend/src/
-  App.jsx            top-level state, 2D/3D toggle, circulation banner
-  components/        MapView (2D), Volume3D (3D), Sidebar
-  hooks/             useGeolocation
-  lib/               api, colormaps, radarRender (2D georef), volume3d (3D beam math)
+  App.jsx            top-level state, scenario selection, 2D/3D toggle, banner
+  components/        MapView (2D), Volume3D (3D), Sidebar, SearchBar
+  hooks/             useGeolocation (legacy live-mode helper)
+  lib/               api, colormaps, radarRender (2D georef), volume3d (3D beam math), places (search catalog)
 ```
 
 ## How the pieces fit
@@ -88,8 +89,18 @@ restrictions may apply wherever it next runs:
 - Run `pytest -q` in `backend/` after touching decode/analytics (17 tests, all
   offline). Run `npm run build` after frontend changes.
 
+## Demo scenarios + search (offline-first UX)
+The UI is driven by a selected **demo scenario** rather than live geolocation.
+- `services/demo_scenarios.py` generates synthetic but physically-plausible
+  polar fields (tornado, hurricane, squall/derecho, clear) that flow through the
+  *same* analytics + render pipeline. Served under `/api/demo/{scenario}/...`.
+- Frontend `SearchBar` + `lib/places.js`: typing a city/region pans the Mapbox
+  camera and swaps in the matching scenario. No network needed.
+- Live endpoints still exist; `_load_latest` now returns **502** (not 500) when
+  the S3 provider is blocked, pointing clients at `/api/demo/scenarios`.
+
 ## Status & next ideas
-- **Done:** Phases 1–5, all committed and pushed to branch
+- **Done:** Phases 1–5 + offline demo-scenario search, committed/pushed to
   `claude/dynamic-radar-project-init-l5ta0z`.
 - **Not started:** opening a PR (deferred by request); auto-refresh/looping
   scans; code-splitting the 3D bundle; expanding the seed station catalog

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.config import get_settings
-from app.routers import alerts, analytics, health, radar
+from app.routers import alerts, analytics, demo, health, radar
 
 settings = get_settings()
 
@@ -36,6 +36,7 @@ app.include_router(health.router)
 app.include_router(radar.router)
 app.include_router(analytics.router)
 app.include_router(alerts.router)
+app.include_router(demo.router)
 
 
 @app.get("/", tags=["meta"])

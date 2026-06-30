@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { getSweep } from '../lib/api';
+import { getDemoSweep } from '../lib/api';
 import { renderSweepToImage } from '../lib/radarRender';
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -27,10 +27,11 @@ const SEVERITY_COLOR = [
 
 /**
  * The 2D Mapbox map: base map + radar overlay (Z/V/CC) + NWS warning polygons
- * + TVS/TDS detection markers. Sweep data is fetched here (keyed by station and
- * field) and georeferenced client-side into a raster image overlay.
+ * + TVS/TDS detection markers. Sweep data for the active demo scenario is
+ * fetched here and georeferenced client-side into a raster image overlay. The
+ * camera flies to `camera` whenever it changes (driven by the search bar).
  */
-export default function MapView({ station, field, alerts, analytics, opacity = 0.8, onSweepMeta }) {
+export default function MapView({ scenario, camera, field, alerts, analytics, opacity = 0.8, onSweepMeta }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
@@ -44,8 +45,8 @@ export default function MapView({ station, field, alerts, analytics, opacity = 0
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: 'mapbox://styles/mapbox/dark-v11',
-      center: [-97.5, 35.4],
-      zoom: 6,
+      center: camera?.center || [-97.5, 35.4],
+      zoom: camera?.zoom || 7,
     });
     map.addControl(new mapboxgl.NavigationControl(), 'top-left');
     map.on('load', () => setReady(true));
@@ -56,26 +57,21 @@ export default function MapView({ station, field, alerts, analytics, opacity = 0
     };
   }, []);
 
-  // --- recenter + station marker when station changes -------------------- //
+  // --- fly camera when the search target changes ------------------------- //
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !station) return;
-    map.flyTo({ center: [station.lon, station.lat], zoom: 7, speed: 1.2 });
-    if (markerRef.current) markerRef.current.remove();
-    markerRef.current = new mapboxgl.Marker({ color: '#4cc9f0' })
-      .setLngLat([station.lon, station.lat])
-      .setPopup(new mapboxgl.Popup().setText(`${station.icao} — ${station.name}`))
-      .addTo(map);
-  }, [ready, station]);
+    if (!map || !ready || !camera) return;
+    map.flyTo({ center: camera.center, zoom: camera.zoom, speed: 1.3, essential: true });
+  }, [ready, camera]);
 
-  // --- radar overlay: fetch sweep + render image source ------------------ //
+  // --- radar overlay: fetch demo sweep + render image source ------------- //
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !station) return;
+    if (!map || !ready || !scenario) return;
     let cancelled = false;
     setRenderMsg('Loading sweep…');
 
-    getSweep(station.icao, { field, maxRangeKm: 300, rangeStride: 2 })
+    getDemoSweep(scenario, { field })
       .then((sweep) => {
         if (cancelled) return;
         onSweepMeta?.(sweep);
@@ -94,6 +90,12 @@ export default function MapView({ station, field, alerts, analytics, opacity = 0
           // Keep warning polygons above radar.
           if (map.getLayer('alerts-line')) map.moveLayer('radar-layer', 'alerts-fill');
         }
+        // Radar-site marker at the (simulated) station location.
+        if (markerRef.current) markerRef.current.remove();
+        markerRef.current = new mapboxgl.Marker({ color: '#4cc9f0' })
+          .setLngLat([sweep.radar_lon, sweep.radar_lat])
+          .setPopup(new mapboxgl.Popup().setText(`${sweep.station} · ${field}`))
+          .addTo(map);
         setRenderMsg('');
       })
       .catch((err) => {
@@ -103,7 +105,7 @@ export default function MapView({ station, field, alerts, analytics, opacity = 0
     return () => {
       cancelled = true;
     };
-  }, [ready, station, field]);
+  }, [ready, scenario, field]);
 
   // --- opacity ----------------------------------------------------------- //
   useEffect(() => {
