@@ -23,8 +23,11 @@ class Settings(BaseSettings):
     port: int = 8000
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    # --- NEXRAD Level II (public NOAA S3 bucket) ---
-    nexrad_bucket: str = "noaa-nexrad-level2"
+    # --- NEXRAD Level II (public S3, anonymous access) ---
+    # Unidata's mirror is used by default (identical YYYY/MM/DD/ICAO/ layout).
+    # The canonical NOAA bucket is "noaa-nexrad-level2" — swap via env if it is
+    # reachable from your network.
+    nexrad_bucket: str = "unidata-nexrad-level2"
     nexrad_region: str = "us-east-1"
 
     # --- NWS alerts API ---

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.config import get_settings
-from app.routers import health
+from app.routers import health, radar
 
 settings = get_settings()
 
@@ -33,7 +33,7 @@ app.add_middleware(
 
 # --- Routers ---
 app.include_router(health.router)
-# Phase 2: app.include_router(radar.router)
+app.include_router(radar.router)
 # Phase 3: app.include_router(analytics.router)
 # Phase 4: app.include_router(alerts.router)
 

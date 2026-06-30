@@ -13,7 +13,7 @@ botocore==1.35.92
 # ---- Numerics / analytics engine ----
 numpy==1.26.4
 scipy==1.14.1
-xarray==2024.11.0
+xarray==2024.9.0          # capped by arm-pyart 1.19.2 (xarray<=2024.9.0)
 
 # ---- HTTP client (NWS alerts API, station metadata) ----
 httpx==0.28.1
